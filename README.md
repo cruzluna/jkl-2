@@ -35,6 +35,11 @@ set -g @plugin 'cruzluna/jkl-2'
 run '~/.tmux/plugins/tpm/tpm'
 ```
 
+If tpm fails to download plugin: 
+``` bash
+$ tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
+```
+
 Default prefix bindings:
 
 - `f`: open `jkl tui` in a popup
