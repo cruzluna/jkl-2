@@ -24,6 +24,23 @@ If needed, ensure `~/.cargo/bin` is on your `PATH`.
 - Switch to session: `Enter`
 - Upsert session metadata: `jkl2 upsert <session_id> <session_name> [--status <status>] [--context <text>]`
 
+## Tmux Plugin (TPM)
+
+Add the plugin and reload TPM:
+
+```
+set -g @plugin 'cruzluna/jkl-2'
+
+# Initialize TMUX plugin manager (keep at bottom)
+run '~/.tmux/plugins/tpm/tpm'
+```
+
+Default prefix bindings:
+
+- `f`: open `jkl tui` in a popup
+- `c`: prompt for context and run `jkl upsert '#S' '#S' --context <input>`
+- `e`: open `~/.config/jkl/session_context.json` in `nvim`
+
 ## Session Context
 
 The TUI reads optional metadata from `~/.config/jkl/session_context.json`. If the file does not exist, it is created with `{}` the first time you run the TUI.
