@@ -15,6 +15,12 @@ cargo install --git https://github.com/cruzluna/jkl-2
 
 If needed, ensure `~/.cargo/bin` is on your `PATH`.
 
+## Update
+
+```
+cargo install --git https://github.com/cruzluna/jkl-2 --force
+```
+
 ## Usage
 
 - Launch the TUI: `jkl2 tui`
