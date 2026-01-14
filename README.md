@@ -56,6 +56,7 @@ Default prefix bindings:
 - `f`: open `jkl tui` in a popup
 - `c`: prompt for context and run `jkl upsert '#S' --session-id '#{session_id}' --context <input>`
 - `e`: open `~/.config/jkl/session_context.json` in `nvim`
+- `S`: open pane status selector popup
 
 ## Session Context
 
