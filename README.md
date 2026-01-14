@@ -106,3 +106,40 @@ Status values:
 - Run TUI locally: `cargo run -- tui`
 - Point tmux at a test server: `tmux -L test list-sessions`
 - Use a temp context file: `HOME=/tmp/jkl-dev cargo run -- tui`
+
+## Agent Instructions
+
+Use this tool to update session and pane statuses; update pane context when needed. Do not modify session context unless explicitly requested. The tool runs inside tmux, so always include tmux context (session name and pane ID) when updating metadata. Use `jkl2 --help` to review available commands.
+
+`jkl2 upsert` details:
+
+```
+Usage: jkl2 upsert [OPTIONS] [SESSION_NAME]...
+
+Arguments:
+  [SESSION_NAME]...
+
+Options:
+      --session-id <SESSION_ID>
+      --pane-id <PANE_ID>
+      --status <STATUS>
+      --context <CONTEXT>...
+```
+
+Examples:
+
+- `jkl2 upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]` upserts session metadata.
+- `jkl2 upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]` upserts pane metadata.
+
+Sample commands:
+
+```
+# Update session status
+jkl2 upsert "work" --status working
+
+# Update pane status
+jkl2 upsert "work" --pane-id %1 --status waiting
+
+# Update pane context
+jkl2 upsert "work" --pane-id %1 --context "debugging timeout"
+```
