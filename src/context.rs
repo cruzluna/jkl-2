@@ -58,6 +58,7 @@ impl std::error::Error for StatusParseError {}
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct PaneContext {
     pub status: Option<AgentStatus>,
+    pub context: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -121,13 +122,19 @@ pub fn upsert_pane(
     session_name: &str,
     pane_id: &str,
     status: Option<AgentStatus>,
+    context: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
     let mut contexts = load_contexts()?;
     let key = session_key(session_name);
     let entry = contexts.entry(key).or_default();
     entry.session_name = Some(session_name.to_string());
     let pane = entry.panes.entry(pane_id.to_string()).or_default();
-    pane.status = status;
+    if let Some(status) = status {
+        pane.status = Some(status);
+    }
+    if let Some(context) = context {
+        pane.context = Some(context);
+    }
     save_contexts(&contexts)?;
     Ok(())
 }
@@ -206,6 +213,9 @@ fn merge_context(target: &mut SessionContext, source: SessionContext) {
         let entry = target.panes.entry(pane_id).or_default();
         if entry.status.is_none() {
             entry.status = pane.status;
+        }
+        if entry.context.is_none() {
+            entry.context = pane.context;
         }
     }
 }

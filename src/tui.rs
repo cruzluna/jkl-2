@@ -466,7 +466,12 @@ impl PaneSelector {
                     }
                     KeyCode::Enter => {
                         let status = self.options[self.selected].1.clone();
-                        crate::context::upsert_pane(&self.session_name, &self.pane_id, status)?;
+                        crate::context::upsert_pane(
+                            &self.session_name,
+                            &self.pane_id,
+                            status,
+                            None,
+                        )?;
                         return Ok(());
                     }
                     _ => {}

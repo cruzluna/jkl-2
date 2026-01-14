@@ -32,13 +32,7 @@ fn handle_upsert(args: UpsertArgs) -> Result<(), Box<dyn std::error::Error>> {
     let session_name = join_tokens(args.session_name);
     let context = args.context.map(join_tokens);
     if let Some(pane_id) = args.pane_id {
-        if context.is_some() {
-            return Err(Box::new(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Pane context is not supported yet",
-            )));
-        }
-        return crate::context::upsert_pane(&session_name, &pane_id, status);
+        return crate::context::upsert_pane(&session_name, &pane_id, status, context);
     }
     crate::context::upsert_session(session_name, args.session_id, status, context)?;
     Ok(())

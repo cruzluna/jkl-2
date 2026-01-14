@@ -31,7 +31,7 @@ cargo install --git https://github.com/cruzluna/jkl-2 --force
 - Search sessions: `/` (type to filter, `Esc` to exit search)
 - Switch to session: `Enter`
 - Upsert session metadata: `jkl2 upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
-- Upsert pane status: `jkl2 upsert <session_name...> --pane-id <pane_id> --status <status>`
+- Upsert pane metadata: `jkl2 upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]`
 - Rename session entry: `jkl2 rename <session_id> <session_name...>`
 - Pane status selector: `jkl2 tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
 
@@ -74,17 +74,19 @@ Shape (keyed by `blake3(session_name)`):
     "context": "my project",
     "panes": {
       "%1": {
-        "status": "working"
+        "status": "working",
+        "context": "focus time"
       }
     }
   }
 }
 ```
 
-Upsert example:
+Upsert examples:
 
 ```
 jkl2 upsert "work" --status working --context "my project"
+jkl2 upsert "work" --pane-id %1 --status working --context "focus time"
 ```
 
 Status values:
