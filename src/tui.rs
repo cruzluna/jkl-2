@@ -491,11 +491,14 @@ impl PaneSelector {
             })
             .collect::<Vec<_>>();
         let line = Line::from(spans);
-        let paragraph = Paragraph::new(line).alignment(Alignment::Center).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!("Pane {}", self.pane_id)),
-        );
+        let pane_title = if self.pane_id.trim().is_empty() {
+            "Pane (unknown)".to_string()
+        } else {
+            format!("Pane {}", self.pane_id)
+        };
+        let paragraph = Paragraph::new(line)
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).title(pane_title));
 
         frame.render_widget(Clear, area);
         frame.render_widget(paragraph, area);
