@@ -30,10 +30,12 @@ cargo install --git https://github.com/cruzluna/jkl-2 --force
 - Refresh pane list: `r`
 - Search sessions: `/` (type to filter, `Esc` to exit search)
 - Switch to session: `Enter`
-- Upsert session metadata: `jkl2 upsert <session_name> [--session-id <session_id>] [--status <status>] [--context <text>]`
-- Upsert pane status: `jkl2 upsert <session_name> --pane-id <pane_id> --status <status>`
-- Rename session entry: `jkl2 rename <session_id> <session_name>`
-- Pane status selector: `jkl2 tui --pane-state --session-name <session_name> --pane-id <pane_id>`
+- Upsert session metadata: `jkl2 upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
+- Upsert pane status: `jkl2 upsert <session_name...> --pane-id <pane_id> --status <status>`
+- Rename session entry: `jkl2 rename <session_id> <session_name...>`
+- Pane status selector: `jkl2 tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
+
+Multi-word session names or context can be passed without quotes; use `--` to terminate positional values if needed.
 
 ## Tmux Plugin (TPM)
 

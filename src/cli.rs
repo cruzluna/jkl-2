@@ -14,6 +14,7 @@ fn handle_tui(args: TuiArgs) -> Result<(), Box<dyn std::error::Error>> {
     if args.pane_state {
         let session_name = args
             .session_name
+            .map(join_tokens)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Missing --session-name"))?;
         let pane_id = args
             .pane_id
@@ -28,21 +29,27 @@ fn handle_upsert(args: UpsertArgs) -> Result<(), Box<dyn std::error::Error>> {
         Some(status) => Some(status.parse()?),
         None => None,
     };
+    let session_name = join_tokens(args.session_name);
+    let context = args.context.map(join_tokens);
     if let Some(pane_id) = args.pane_id {
-        if args.context.is_some() {
+        if context.is_some() {
             return Err(Box::new(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Pane context is not supported yet",
             )));
         }
-        return crate::context::upsert_pane(&args.session_name, &pane_id, status);
+        return crate::context::upsert_pane(&session_name, &pane_id, status);
     }
-    crate::context::upsert_session(args.session_name, args.session_id, status, args.context)?;
+    crate::context::upsert_session(session_name, args.session_id, status, context)?;
     Ok(())
 }
 
 fn handle_rename(args: RenameArgs) -> Result<(), Box<dyn std::error::Error>> {
-    crate::context::rename_session(&args.session_id, &args.session_name)
+    crate::context::rename_session(&args.session_id, &join_tokens(args.session_name))
+}
+
+fn join_tokens(tokens: Vec<String>) -> String {
+    tokens.join(" ")
 }
 
 #[derive(Parser)]
@@ -63,27 +70,29 @@ enum Commands {
 struct TuiArgs {
     #[arg(long)]
     pane_state: bool,
-    #[arg(long)]
-    session_name: Option<String>,
+    #[arg(long, num_args = 1..)]
+    session_name: Option<Vec<String>>,
     #[arg(long)]
     pane_id: Option<String>,
 }
 
 #[derive(Args)]
 struct UpsertArgs {
-    session_name: String,
+    #[arg(num_args = 1..)]
+    session_name: Vec<String>,
     #[arg(long)]
     session_id: Option<String>,
     #[arg(long)]
     pane_id: Option<String>,
     #[arg(long)]
     status: Option<String>,
-    #[arg(long)]
-    context: Option<String>,
+    #[arg(long, num_args = 1..)]
+    context: Option<Vec<String>>,
 }
 
 #[derive(Args)]
 struct RenameArgs {
     session_id: String,
-    session_name: String,
+    #[arg(num_args = 1..)]
+    session_name: Vec<String>,
 }
