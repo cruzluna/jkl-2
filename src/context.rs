@@ -13,6 +13,7 @@ pub enum AgentStatus {
     Working,
     Waiting,
     Done,
+    None,
 }
 
 impl std::fmt::Display for AgentStatus {
@@ -22,6 +23,7 @@ impl std::fmt::Display for AgentStatus {
             AgentStatus::Working => "working",
             AgentStatus::Waiting => "waiting",
             AgentStatus::Done => "done",
+            AgentStatus::None => "none",
         };
         formatter.write_str(text)
     }
@@ -36,6 +38,7 @@ impl FromStr for AgentStatus {
             "working" => Ok(AgentStatus::Working),
             "waiting" => Ok(AgentStatus::Waiting),
             "done" => Ok(AgentStatus::Done),
+            "none" => Ok(AgentStatus::None),
             other => Err(StatusParseError(format!("Invalid status: {other}"))),
         }
     }

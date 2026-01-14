@@ -514,7 +514,7 @@ fn pane_status_options() -> Vec<(String, Option<crate::context::AgentStatus>)> {
         ),
         ("idle".to_string(), Some(crate::context::AgentStatus::Idle)),
         ("done".to_string(), Some(crate::context::AgentStatus::Done)),
-        ("none".to_string(), None),
+        ("none".to_string(), Some(crate::context::AgentStatus::None)),
     ]
 }
 
@@ -668,6 +668,7 @@ fn status_text(status: Option<&crate::context::AgentStatus>) -> String {
 fn status_style(status: Option<&crate::context::AgentStatus>) -> Style {
     match status {
         Some(crate::context::AgentStatus::Done) => Style::default().fg(Color::Green),
+        Some(crate::context::AgentStatus::None) => Style::default().fg(Color::Gray),
         Some(crate::context::AgentStatus::Working) => Style::default().fg(Color::Blue),
         Some(crate::context::AgentStatus::Waiting | crate::context::AgentStatus::Idle) => {
             Style::default().fg(Color::Yellow)
