@@ -7,47 +7,92 @@ use ratatui::{DefaultTerminal, Frame};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
-use unicode_width::UnicodeWidthStr;
+use thiserror::Error;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+use log::{debug, info};
 
 const DATA_NOT_RECEIVED: &str = "-";
 const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (l/h) expand/collapse | (r) refresh";
 
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let sessions = crate::tmux::list_sessions()?;
-    let contexts = crate::context::load_contexts()?;
-    let panes = crate::tmux::list_panes()?;
+#[derive(Error, Debug)]
+pub enum TuiError {
+    #[error("{0}")]
+    BackendFailure(String),
+    #[error("{0}")]
+    ContextResolutionFailure(String),
+    #[error("todo")]
+    StateConstructionFailure,
+    #[error("Terminal I/O error: {0}")]
+    TerminalIo(#[from] io::Error),
+}
+
+pub fn run() -> Result<(), TuiError> {
+    info!("tui starting");
+    let sessions =
+        crate::tmux::list_sessions().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+    info!(
+        "tui loaded {} tmux sessions: {:?}",
+        sessions.len(),
+        sessions
+    );
+
+    let contexts = crate::context::load_contexts()
+        .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
+    info!("tui loaded {} contexts", contexts.len());
+
+    let panes = crate::tmux::list_panes().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+    info!("tui loaded {} panes", panes.len());
+
     let items = build_sessions(sessions, contexts, panes);
+    info!("tui built {} session rows", items.len());
+
     let mut app = App::new(items)?;
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
     ratatui::restore();
+    info!("tui exiting");
     result
 }
 
-pub fn run_pane_selector(
-    session_name: String,
-    pane_id: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut selector = PaneSelector::new(session_name, pane_id)?;
+pub fn run_pane_selector(pane_id: String, session_name: Option<String>) -> Result<(), TuiError> {
+    info!(
+        "tui pane selector starting pane_id={} session_name={:?}",
+        pane_id, session_name
+    );
+    let mut selector = PaneSelector::new(pane_id, session_name)?;
     let mut terminal = ratatui::init();
     let result = selector.run(&mut terminal);
     ratatui::restore();
+    info!("tui pane selector exiting");
     result
 }
 
 #[derive(Clone)]
 struct SessionRow {
+    /// The session ID
     id: String,
+    /// The name of the session
     name: String,
+    /// The status of the session
     status: Option<crate::context::AgentStatus>,
+    /// The context of the session
     context: String,
+    /// The panes belonging to the session
     panes: Vec<PaneRow>,
 }
 
 #[derive(Clone)]
 struct PaneRow {
+    /// The pane ID
     id: String,
+    /// Temporary name of a pane, likely to fall out of sync with the pane ID
+    alias: Option<String>,
+    /// The status of the pane
     status: Option<crate::context::AgentStatus>,
+    /// The context of the pane
+    context: String,
+    /// The session ID
     session_id: String,
 }
 
@@ -75,35 +120,61 @@ impl RowItem {
     }
 }
 
+enum ListViewModes {
+    /// Default mode when launching
+    NormalMode,
+    /// Mode when searching for a session or pane
+    SearchMode,
+}
+
+struct SearchQuery {
+    query: String,
+    // TODO: cursor position
+}
+
+/// Column widths for the session table (Session, Status, Context).
+struct ColumnWidths {
+    session: u16,
+    status: u16,
+    context: u16,
+}
+
 struct App {
     state: TableState,
     sessions: Vec<SessionRow>,
     filtered_sessions: Vec<SessionRow>,
     rows: Vec<RowItem>,
-    widths: (u16, u16, u16),
-    search_query: String,
-    search_mode: bool,
+    widths: ColumnWidths,
+    search: SearchQuery,
+    mode: ListViewModes,
     expanded_sessions: HashSet<String>,
 }
 
 impl App {
-    fn new(sessions: Vec<SessionRow>) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Creates a list view of sessions and panes
+    fn new(sessions: Vec<SessionRow>) -> Result<Self, TuiError> {
         let mut app = Self {
             state: TableState::default(),
             filtered_sessions: sessions.clone(),
             sessions,
             rows: Vec::new(),
-            widths: (0, 0, 0),
-            search_query: String::new(),
-            search_mode: false,
+            widths: ColumnWidths {
+                session: 0,
+                status: 0,
+                context: 0,
+            },
+            search: SearchQuery {
+                query: String::new(),
+            },
+            mode: ListViewModes::NormalMode,
             expanded_sessions: HashSet::new(),
         };
         app.rebuild_rows();
         app.ensure_selection();
         Ok(app)
     }
-
-    fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<(), Box<dyn std::error::Error>> {
+    /// Runs the main event loop for the list view
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<(), TuiError> {
         loop {
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -112,42 +183,44 @@ impl App {
                     continue;
                 }
 
-                if self.search_mode {
+                if matches!(self.mode, ListViewModes::SearchMode) {
                     match key.code {
                         KeyCode::Esc => {
-                            self.search_mode = false;
+                            self.mode = ListViewModes::NormalMode;
                         }
                         KeyCode::Enter => {
-                            self.switch_selected()?;
+                            self.switch_session()?;
                             return Ok(());
                         }
                         KeyCode::Backspace => {
-                            self.search_query.pop();
+                            self.search.query.pop();
                             self.apply_search()?;
                         }
                         KeyCode::Down => self.next_row(),
                         KeyCode::Up => self.previous_row(),
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            self.search_mode = false;
+                            self.mode = ListViewModes::NormalMode;
                         }
+                        // Append a character to the search query
                         KeyCode::Char(c) => {
-                            self.search_query.push(c);
+                            self.search.query.push(c);
                             self.apply_search()?;
                         }
                         _ => {}
                     }
                 } else {
+                    // Normal mode keybindings
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             return Ok(());
                         }
                         KeyCode::Char('/') => {
-                            self.search_mode = true;
+                            self.mode = ListViewModes::SearchMode;
                             self.apply_search()?;
                         }
                         KeyCode::Enter => {
-                            self.switch_selected()?;
+                            self.switch_session()?;
                             return Ok(());
                         }
                         KeyCode::Char('j') | KeyCode::Down => self.next_row(),
@@ -155,6 +228,7 @@ impl App {
                         KeyCode::Char('l') => self.expand_selected(),
                         KeyCode::Char('h') => self.collapse_selected(),
                         KeyCode::Char('r') => {
+                            info!("tui refresh requested");
                             self.refresh_panes()?;
                         }
                         _ => {}
@@ -203,16 +277,13 @@ impl App {
         self.selected_row().map(RowItem::key)
     }
 
-    fn apply_search(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn apply_search(&mut self) -> Result<(), TuiError> {
         let previous = self.selected_key();
         self.apply_search_with(previous)
     }
 
-    fn apply_search_with(
-        &mut self,
-        previous: Option<RowKey>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if self.search_query.trim().is_empty() {
+    fn apply_search_with(&mut self, previous: Option<RowKey>) -> Result<(), TuiError> {
+        if self.search.query.trim().is_empty() {
             self.filtered_sessions = self.sessions.clone();
             self.rebuild_rows();
             self.restore_selection(previous);
@@ -233,7 +304,7 @@ impl App {
             })
             .collect::<Vec<_>>();
 
-        let output = run_fzf_filter(&self.search_query, &candidates)?;
+        let output = run_fzf_filter(&self.search.query, &candidates)?;
         let mut lines = output.lines();
         let _ = lines.next();
 
@@ -284,13 +355,16 @@ impl App {
         self.state.select(Some(0));
     }
 
-    fn switch_selected(&self) -> Result<(), Box<dyn std::error::Error>> {
+    /// Switches to the selected session or pane
+    fn switch_session(&self) -> Result<(), TuiError> {
         if let Some(row) = self.selected_row() {
-            let session_id = match row {
+            let target_session_id = match row {
                 RowItem::Session(session) => session.id.as_str(),
                 RowItem::Pane(pane) => pane.session_id.as_str(),
             };
-            crate::tmux::switch_client(session_id)?;
+            info!("tui switching to session_id={}", target_session_id);
+            crate::tmux::switch_client(target_session_id)
+                .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
         }
         Ok(())
     }
@@ -321,23 +395,41 @@ impl App {
         }
     }
 
-    fn refresh_panes(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let live_panes = crate::tmux::list_panes()?;
+    fn refresh_panes(&mut self) -> Result<(), TuiError> {
+        let live_panes =
+            crate::tmux::list_panes().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
         let live_map = collect_live_panes(&live_panes);
-        crate::context::prune_panes(&live_map)?;
+        crate::context::prune_panes(&live_map)
+            .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
         self.reload_data()?;
         Ok(())
     }
 
-    fn reload_data(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn reload_data(&mut self) -> Result<(), TuiError> {
+        info!("tui reload_data starting");
         let previous = self.selected_key();
-        let sessions = crate::tmux::list_sessions()?;
-        let contexts = crate::context::load_contexts()?;
-        let panes = crate::tmux::list_panes()?;
+
+        let sessions =
+            crate::tmux::list_sessions().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+        info!("reload: loaded {} tmux sessions", sessions.len());
+
+        let contexts = crate::context::load_contexts()
+            .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
+        info!("reload: loaded {} contexts", contexts.len());
+
+        let panes =
+            crate::tmux::list_panes().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+        info!("reload: loaded {} panes", panes.len());
+
         self.sessions = build_sessions(sessions, contexts, panes);
         self.filtered_sessions = self.sessions.clone();
         self.rebuild_rows();
         self.apply_search_with(previous)?;
+        info!(
+            "tui reloaded {} sessions, {} rows",
+            self.sessions.len(),
+            self.rows.len()
+        );
         Ok(())
     }
 
@@ -354,13 +446,13 @@ impl App {
     }
 
     fn render_search(&self, frame: &mut Frame, area: Rect) {
-        let (text, style) = if self.search_query.is_empty() {
+        let (text, style) = if self.search.query.is_empty() {
             (
                 "Search: ".to_string(),
                 Style::default().add_modifier(Modifier::DIM),
             )
         } else {
-            (format!("Search: {}", self.search_query), Style::default())
+            (format!("Search: {}", self.search.query), Style::default())
         };
         let search = Paragraph::new(Text::from(text)).style(style);
         frame.render_widget(search, area);
@@ -369,6 +461,15 @@ impl App {
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let header = Row::new(["Session", "Status", "Context"])
             .style(Style::default().add_modifier(Modifier::BOLD));
+
+        // Calculate available width for context column
+        // area.width - 2 (borders) - session_width - status_width - 2 (column spacing)
+        let available_context_width = area
+            .width
+            .saturating_sub(2) // borders
+            .saturating_sub(self.widths.session + 1)
+            .saturating_sub(self.widths.status + 1)
+            .saturating_sub(2); // column spacing
 
         let rows = self.rows.iter().enumerate().map(|(index, item)| {
             let mut base_style = if index % 2 == 0 {
@@ -382,7 +483,10 @@ impl App {
             Row::new(vec![
                 Cell::from(row_label(item)),
                 Cell::from(status_text(row_status(item))).style(status_style(row_status(item))),
-                Cell::from(row_context(item)),
+                Cell::from(truncate_with_ellipsis(
+                    &row_context(item),
+                    available_context_width as usize,
+                )),
             ])
             .style(base_style)
         });
@@ -390,9 +494,9 @@ impl App {
         let table = Table::new(
             rows,
             [
-                Constraint::Length(self.widths.0 + 1),
-                Constraint::Length(self.widths.1 + 1),
-                Constraint::Min(self.widths.2 + 1),
+                Constraint::Length(self.widths.session + 1),
+                Constraint::Length(self.widths.status + 1),
+                Constraint::Min(0),
             ],
         )
         .header(header)
@@ -405,10 +509,10 @@ impl App {
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::horizontal([Constraint::Min(1), Constraint::Length(9)]).split(area);
         let footer = Paragraph::new(Text::from(INFO_TEXT));
-        let mode = if self.search_mode {
+        let mode = if matches!(self.mode, ListViewModes::SearchMode) {
             "[SEARCH]"
         } else {
-            "[NORM]"
+            "[NORMAL]"
         };
         let mode_widget = Paragraph::new(Text::from(mode)).alignment(Alignment::Right);
 
@@ -418,20 +522,26 @@ impl App {
 }
 
 struct PaneSelector {
-    session_name: String,
+    session_name: Option<String>,
     pane_id: String,
     options: Vec<(String, Option<crate::context::AgentStatus>)>,
     selected: usize,
 }
 
 impl PaneSelector {
-    fn new(session_name: String, pane_id: String) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Create a new pane selector. Uses defaults when pane_id is empty or context cannot be loaded so the UI can always be shown.
+    fn new(pane_id: String, session_name: Option<String>) -> Result<Self, TuiError> {
         let options = pane_status_options();
-        let current = current_pane_status(&session_name, &pane_id)?;
+        let current = current_pane_status(&pane_id, session_name.as_deref()).unwrap_or(None);
         let selected = options
             .iter()
             .position(|(_, status)| *status == current)
             .unwrap_or(0);
+        let pane_id = if pane_id.trim().is_empty() {
+            "(unknown)".to_string()
+        } else {
+            pane_id
+        };
         Ok(Self {
             session_name,
             pane_id,
@@ -440,7 +550,8 @@ impl PaneSelector {
         })
     }
 
-    fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<(), Box<dyn std::error::Error>> {
+    /// Run the pane selector event loop
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<(), TuiError> {
         loop {
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -466,12 +577,18 @@ impl PaneSelector {
                     }
                     KeyCode::Enter => {
                         let status = self.options[self.selected].1.clone();
-                        crate::context::upsert_pane(
-                            &self.session_name,
-                            &self.pane_id,
-                            status,
-                            None,
-                        )?;
+                        // BUG: Handle the case where the session name is not provided
+                        // and there we haven't saved anything for the session yet
+                        if let Some(ref session_name) = self.session_name {
+                            crate::context::upsert_pane(
+                                session_name,
+                                &self.pane_id,
+                                None,
+                                status,
+                                None,
+                            )
+                            .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
+                        }
                         return Ok(());
                     }
                     _ => {}
@@ -480,6 +597,7 @@ impl PaneSelector {
         }
     }
 
+    /// Draw the pane selector UI
     fn draw(&self, frame: &mut Frame) {
         let area = centered_rect(60, 20, frame.area());
         let spans = self
@@ -496,11 +614,7 @@ impl PaneSelector {
             })
             .collect::<Vec<_>>();
         let line = Line::from(spans);
-        let pane_title = if self.pane_id.trim().is_empty() {
-            "Pane (unknown)".to_string()
-        } else {
-            format!("Pane {}", self.pane_id)
-        };
+        let pane_title = format!("Pane {}", self.pane_id);
         let paragraph = Paragraph::new(line)
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL).title(pane_title));
@@ -520,23 +634,32 @@ fn pane_status_options() -> Vec<(String, Option<crate::context::AgentStatus>)> {
             "waiting".to_string(),
             Some(crate::context::AgentStatus::Waiting),
         ),
-        ("idle".to_string(), Some(crate::context::AgentStatus::Idle)),
         ("done".to_string(), Some(crate::context::AgentStatus::Done)),
         ("none".to_string(), Some(crate::context::AgentStatus::None)),
     ]
 }
 
 fn current_pane_status(
-    session_name: &str,
     pane_id: &str,
-) -> Result<Option<crate::context::AgentStatus>, Box<dyn std::error::Error>> {
-    let contexts = crate::context::load_contexts()?;
-    let key = crate::context::session_key(session_name);
-    let status = contexts
-        .get(&key)
-        .and_then(|session| session.panes.get(pane_id))
-        .and_then(|pane| pane.status.clone());
-    Ok(status)
+    session_name: Option<&str>,
+) -> Result<Option<crate::context::AgentStatus>, TuiError> {
+    let contexts = crate::context::load_contexts()
+        .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
+
+    if let Some(session_name) = session_name {
+        return Ok(contexts
+            .get(&crate::context::session_key(session_name))
+            .and_then(|session| session.panes.get(pane_id))
+            .and_then(|pane| pane.pane_status.clone()));
+    }
+
+    Ok(contexts.iter().find_map(|session_context| {
+        session_context
+            .1
+            .panes
+            .get(pane_id)
+            .and_then(|pane_context| pane_context.pane_status.clone())
+    }))
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, rect: Rect) -> Rect {
@@ -555,10 +678,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, rect: Rect) -> Rect {
     horizontal[1]
 }
 
-fn run_fzf_filter(
-    query: &str,
-    candidates: &[String],
-) -> Result<String, Box<dyn std::error::Error>> {
+fn run_fzf_filter(query: &str, candidates: &[String]) -> Result<String, TuiError> {
     let mut child = Command::new("fzf")
         .args(["--filter", query, "--print-query", "--reverse"])
         .stdin(Stdio::piped())
@@ -574,7 +694,7 @@ fn run_fzf_filter(
     let output = child.wait_with_output()?;
     if !output.status.success() && output.status.code() != Some(1) {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(Box::new(io::Error::new(io::ErrorKind::Other, message)));
+        return Err(TuiError::BackendFailure(message));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -584,6 +704,17 @@ fn build_sessions(
     contexts: HashMap<String, crate::context::SessionContext>,
     panes: Vec<crate::tmux::TmuxPane>,
 ) -> Vec<SessionRow> {
+    info!(
+        "build_sessions: {} tmux sessions, {} contexts, {} panes",
+        sessions.len(),
+        contexts.len(),
+        panes.len()
+    );
+    debug!(
+        "available context keys: {:?}",
+        contexts.keys().collect::<Vec<_>>()
+    );
+
     let mut panes_by_session: HashMap<String, Vec<String>> = HashMap::new();
     for pane in panes {
         panes_by_session
@@ -592,13 +723,23 @@ fn build_sessions(
             .push(pane.pane_id);
     }
 
-    sessions
+    let built: Vec<SessionRow> = sessions
         .into_iter()
         .map(|session| {
             let key = crate::context::session_key(&session.name);
+            debug!("building session: {:?} computed_key={}", session, key);
+
             let context = contexts.get(&key);
-            let status = context.and_then(|ctx| ctx.status.clone());
-            let context_value = normalize_field(context.and_then(|ctx| ctx.context.as_ref()));
+            if let Some(ctx) = context {
+                debug!("  ✓ context found: {:?}", ctx);
+            } else {
+                debug!("  ✗ no context found for session={}", session.name);
+            }
+
+            let status = context.and_then(|ctx| ctx.session_status.clone());
+            let context_value =
+                normalize_field(context.and_then(|ctx| ctx.session_context.as_ref()));
+
             let mut pane_rows = panes_by_session
                 .get(&session.name)
                 .cloned()
@@ -607,12 +748,15 @@ fn build_sessions(
             let panes = pane_rows
                 .into_iter()
                 .map(|pane_id| {
-                    let pane_status = context
-                        .and_then(|ctx| ctx.panes.get(&pane_id))
-                        .and_then(|pane| pane.status.clone());
+                    let pane_ctx = context.and_then(|ctx| ctx.panes.get(&pane_id));
+                    let pane_status = pane_ctx.and_then(|pane| pane.pane_status.clone());
+                    let pane_context_value =
+                        normalize_field(pane_ctx.and_then(|pane| pane.pane_context.as_ref()));
                     PaneRow {
                         id: pane_id,
+                        alias: None,
                         status: pane_status,
+                        context: pane_context_value,
                         session_id: session.id.clone(),
                     }
                 })
@@ -625,7 +769,14 @@ fn build_sessions(
                 panes,
             }
         })
-        .collect()
+        .collect();
+    info!(
+        "built {} session rows from {} contexts and {} pane groups",
+        built.len(),
+        contexts.len(),
+        panes_by_session.len()
+    );
+    built
 }
 
 fn collect_live_panes(panes: &[crate::tmux::TmuxPane]) -> HashMap<String, HashSet<String>> {
@@ -655,7 +806,7 @@ fn row_status(item: &RowItem) -> Option<&crate::context::AgentStatus> {
 fn row_context(item: &RowItem) -> String {
     match item {
         RowItem::Session(row) => row.context.clone(),
-        RowItem::Pane(_) => DATA_NOT_RECEIVED.to_string(),
+        RowItem::Pane(row) => row.context.clone(),
     }
 }
 
@@ -665,6 +816,25 @@ fn normalize_field(value: Option<&String>) -> String {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| DATA_NOT_RECEIVED.to_string())
+}
+
+fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
+    const ELLIPSIS: &str = "...";
+
+    if UnicodeWidthStr::width(s) <= max_width {
+        return s.to_string();
+    }
+    if max_width <= 3 {
+        return ELLIPSIS.to_string();
+    }
+    let mut w = 0;
+    for (i, c) in s.char_indices() {
+        w += c.width().unwrap_or(1);
+        if w > max_width - 3 {
+            return format!("{}{}", &s[..i], ELLIPSIS);
+        }
+    }
+    s.to_string()
 }
 
 fn status_text(status: Option<&crate::context::AgentStatus>) -> String {
@@ -678,27 +848,25 @@ fn status_style(status: Option<&crate::context::AgentStatus>) -> Style {
         Some(crate::context::AgentStatus::Done) => Style::default().fg(Color::Green),
         Some(crate::context::AgentStatus::None) => Style::default().fg(Color::Gray),
         Some(crate::context::AgentStatus::Working) => Style::default().fg(Color::Blue),
-        Some(crate::context::AgentStatus::Waiting | crate::context::AgentStatus::Idle) => {
-            Style::default().fg(Color::Yellow)
-        }
+        Some(crate::context::AgentStatus::Waiting) => Style::default().fg(Color::Yellow),
         None => Style::default(),
     }
 }
 
-fn measure_widths(items: &[RowItem]) -> (u16, u16, u16) {
-    let name_len = items
+fn measure_widths(items: &[RowItem]) -> ColumnWidths {
+    let session = items
         .iter()
         .map(|item| UnicodeWidthStr::width(row_label(item).as_str()))
         .max()
         .unwrap_or(0)
         .max(UnicodeWidthStr::width("Session"));
-    let status_len = items
+    let status = items
         .iter()
         .map(|item| UnicodeWidthStr::width(status_text(row_status(item)).as_str()))
         .max()
         .unwrap_or(0)
         .max(UnicodeWidthStr::width("Status"));
-    let context_len = items
+    let context = items
         .iter()
         .map(|item| UnicodeWidthStr::width(row_context(item).as_str()))
         .max()
@@ -706,5 +874,9 @@ fn measure_widths(items: &[RowItem]) -> (u16, u16, u16) {
         .max(UnicodeWidthStr::width("Context"));
 
     #[allow(clippy::cast_possible_truncation)]
-    (name_len as u16, status_len as u16, context_len as u16)
+    ColumnWidths {
+        session: session as u16,
+        status: status as u16,
+        context: context as u16,
+    }
 }
