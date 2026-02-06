@@ -1,0 +1,4 @@
+interface:
+  display_name: "JKL CLI"
+  short_description: "Inspect tmux sessions and update metadata via jkl."
+  default_prompt: "Use $jkl-cli to inspect tmux sessions and update session or pane metadata."
