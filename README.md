@@ -1,4 +1,4 @@
-# jkl2
+# jkl
 
 A CLI/TUI tool for inspecting tmux sessions.
 
@@ -9,6 +9,16 @@ A CLI/TUI tool for inspecting tmux sessions.
 
 ## Install
 
+### Binary (recommended)
+
+```
+curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/main/install.sh | bash
+```
+
+Optional: set `JKL_INSTALL_DIR` to choose where the binary is installed.
+
+### Cargo
+
 ```
 cargo install --git https://github.com/cruzluna/jkl-2
 ```
@@ -18,22 +28,45 @@ If needed, ensure `~/.cargo/bin` is on your `PATH`.
 ## Update
 
 ```
+jkl update
+```
+
+To include pre-releases:
+
+```
+jkl update --prerelease
+```
+
+If you installed via Cargo:
+
+```
 cargo install --git https://github.com/cruzluna/jkl-2 --force
 ```
 
+### Release assets
+
+The update command and install script expect GitHub release assets named:
+
+- `jkl-x86_64-apple-darwin.tar.gz`
+- `jkl-aarch64-apple-darwin.tar.gz`
+- `jkl-x86_64-unknown-linux-gnu.tar.gz`
+- `jkl-aarch64-unknown-linux-gnu.tar.gz`
+
+Each archive should contain the `jkl` binary at the top level.
+
 ## Usage
 
-- Launch the TUI: `jkl2 tui`
+- Launch the TUI: `jkl tui`
 - Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search first)
 - Navigate rows: `↑`/`↓` or `j`/`k`
 - Expand/collapse panes: `l`/`h`
 - Refresh pane list: `r`
 - Search sessions: `/` (type to filter, `Esc` to exit search)
 - Switch to session: `Enter`
-- Upsert session metadata: `jkl2 upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
-- Upsert pane metadata: `jkl2 upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]`
-- Rename session entry: `jkl2 rename <session_id> <session_name...>`
-- Pane status selector: `jkl2 tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
+- Upsert session metadata: `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
+- Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]`
+- Rename session entry: `jkl rename <session_id> <session_name...>`
+- Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
 
 Multi-word session names or context can be passed without quotes; use `--` to terminate positional values if needed.
 
@@ -104,8 +137,8 @@ Shape (keyed by `blake3(session_name)`):
 Upsert examples:
 
 ```
-jkl2 upsert "work" --status working --context "my project"
-jkl2 upsert "work" --pane-id %1 --status working --context "focus time"
+jkl upsert "work" --status working --context "my project"
+jkl upsert "work" --pane-id %1 --status working --context "focus time"
 ```
 
 Status values:
@@ -128,12 +161,12 @@ Status values:
 
 ## Agent Instructions
 
-Use this tool to update session and pane statuses; update pane context when needed. Do not modify session context unless explicitly requested. The tool runs inside tmux, so always include tmux context (session name and pane ID) when updating metadata. Use `jkl2 --help` to review available commands.
+Use this tool to update session and pane statuses; update pane context when needed. Do not modify session context unless explicitly requested. The tool runs inside tmux, so always include tmux context (session name and pane ID) when updating metadata. Use `jkl --help` to review available commands.
 
-`jkl2 upsert` details:
+`jkl upsert` details:
 
 ```
-Usage: jkl2 upsert [OPTIONS] [SESSION_NAME]...
+Usage: jkl upsert [OPTIONS] [SESSION_NAME]...
 
 Arguments:
   [SESSION_NAME]...
@@ -147,18 +180,18 @@ Options:
 
 Examples:
 
-- `jkl2 upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]` upserts session metadata.
-- `jkl2 upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]` upserts pane metadata.
+- `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]` upserts session metadata.
+- `jkl upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]` upserts pane metadata.
 
 Sample commands:
 
 ```
 # Update session status
-jkl2 upsert "work" --status working
+jkl upsert "work" --status working
 
 # Update pane status
-jkl2 upsert "work" --pane-id %1 --status waiting
+jkl upsert "work" --pane-id %1 --status waiting
 
 # Update pane context
-jkl2 upsert "work" --pane-id %1 --context "debugging timeout"
+jkl upsert "work" --pane-id %1 --context "debugging timeout"
 ```

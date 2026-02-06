@@ -17,6 +17,7 @@ enum Commands {
     Tui(TuiArgs),
     Upsert(UpsertArgs),
     Rename(RenameArgs),
+    Update(UpdateArgs),
 }
 
 #[derive(Args)]
@@ -54,6 +55,13 @@ struct RenameArgs {
     session_name: Vec<String>,
 }
 
+#[derive(Args)]
+struct UpdateArgs {
+    /// Include pre-release versions.
+    #[arg(long)]
+    prerelease: bool,
+}
+
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     debug!("cli parsed");
@@ -69,6 +77,10 @@ pub fn run() -> Result<()> {
         Commands::Rename(args) => {
             info!("command=rename");
             handle_rename(args)?
+        }
+        Commands::Update(args) => {
+            info!("command=update");
+            handle_update(args)?
         }
     };
     Ok(())
@@ -123,6 +135,10 @@ fn handle_rename(args: RenameArgs) -> Result<(), ContextError> {
     );
     crate::context::rename_session(&args.session_id, &session_name)?;
     Ok(())
+}
+
+fn handle_update(args: UpdateArgs) -> Result<()> {
+    crate::update::run(args.prerelease)
 }
 
 fn join_tokens(tokens: Vec<String>) -> String {
