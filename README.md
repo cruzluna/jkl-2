@@ -53,12 +53,31 @@ If tpm fails to download plugin:
 $ tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
 ```
 
-Default prefix bindings:
+Default prefix bindings (only set when the key is currently unbound):
 
 - `f`: open `jkl tui` in a popup
 - `c`: prompt for context and run `jkl upsert '#S' --session-id '#{session_id}' --context <input>`
 - `e`: open `~/.config/jkl/session_context.json` in `nvim`
 - `S`: open pane status selector popup
+
+You can configure or disable each key:
+
+```tmux
+# Set custom keys
+set -g @jkl_key_tui 'J'
+set -g @jkl_key_context 'C'
+set -g @jkl_key_edit 'E'
+set -g @jkl_key_pane_state 'P'
+
+# Disable a binding
+set -g @jkl_key_edit 'none'
+```
+
+By default the plugin does not override existing tmux/user bindings. If you want it to force overrides, set:
+
+```tmux
+set -g @jkl_force_bind_keys 'on'
+```
 
 ## Session Context
 
