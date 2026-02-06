@@ -13,7 +13,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use log::{debug, info};
 
 const DATA_NOT_RECEIVED: &str = "-";
-const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9) jump | (l/h) expand/collapse | (r) refresh";
+const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (r) refresh";
 
 #[derive(Error, Debug)]
 pub enum TuiError {
@@ -151,7 +151,6 @@ struct App {
     search: SearchQuery,
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
-    jump_buffer: String,
     filter: FilterFn,
 }
 
@@ -178,7 +177,6 @@ impl App {
             },
             mode: ListViewModes::NormalMode,
             expanded_sessions: HashSet::new(),
-            jump_buffer: String::new(),
             filter,
         };
         app.rebuild_rows();
@@ -199,10 +197,8 @@ impl App {
                     match key.code {
                         KeyCode::Esc => {
                             self.mode = ListViewModes::NormalMode;
-                            self.jump_buffer.clear();
                         }
                         KeyCode::Enter => {
-                            self.jump_buffer.clear();
                             self.switch_session()?;
                             return Ok(());
                         }
@@ -214,7 +210,6 @@ impl App {
                         KeyCode::Up => self.previous_row(),
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             self.mode = ListViewModes::NormalMode;
-                            self.jump_buffer.clear();
                         }
                         // Append a character to the search query
                         KeyCode::Char(c) => {
@@ -225,9 +220,12 @@ impl App {
                     }
                 } else {
                     // Normal mode keybindings
-                    let is_digit = matches!(key.code, KeyCode::Char(c) if c.is_ascii_digit());
-                    if !is_digit {
-                        self.jump_buffer.clear();
+                    if let KeyCode::Char(c) = key.code
+                        && key.modifiers.contains(KeyModifiers::ALT)
+                        && let Some(index) = meta_jump_index(c)
+                    {
+                        self.jump_to_session_index(index);
+                        continue;
                     }
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
@@ -257,10 +255,8 @@ impl App {
                             self.refresh_panes()?;
                         }
                         KeyCode::Char(c) if c.is_ascii_digit() => {
-                            self.jump_buffer.push(c);
-                            if let Ok(index) = self.jump_buffer.parse::<usize>() {
-                                self.jump_to_session_index(index);
-                            }
+                            let index = c.to_digit(10).unwrap_or(0) as usize;
+                            self.jump_to_session_index(index);
                         }
                         _ => {}
                     }
@@ -912,6 +908,19 @@ fn row_context(item: &RowItem) -> String {
     }
 }
 
+fn meta_jump_index(c: char) -> Option<usize> {
+    let lower = c.to_ascii_lowercase();
+    if !lower.is_ascii_alphabetic() {
+        return None;
+    }
+    let offset = (lower as u8).saturating_sub(b'a') as usize;
+    if offset < 26 {
+        Some(10 + offset)
+    } else {
+        None
+    }
+}
+
 fn normalize_field(value: Option<&String>) -> String {
     value
         .map(|value| value.trim())
@@ -1097,5 +1106,63 @@ mod tests {
 
         assert_eq!(app.filtered_sessions.len(), 1);
         assert_eq!(app.filtered_sessions[0].id, "@1");
+    }
+
+    #[test]
+    fn meta_jump_index_maps_option_letters() {
+        assert_eq!(meta_jump_index('a'), Some(10));
+        assert_eq!(meta_jump_index('z'), Some(35));
+        assert_eq!(meta_jump_index('A'), Some(10));
+        assert_eq!(meta_jump_index('0'), None);
+        assert_eq!(meta_jump_index('-'), None);
+    }
+
+    #[test]
+    fn row_label_prefixes_session_index() {
+        let sessions = vec![session_row("@1", "alpha"), session_row("@2", "beta")];
+        let app = App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        assert_eq!(app.row_label(&app.rows[0]), "0: alpha");
+        assert_eq!(app.row_label(&app.rows[1]), "1: beta");
+    }
+
+    #[test]
+    fn jump_to_session_index_targets_session_rows_with_expanded_panes() {
+        let sessions = vec![
+            SessionRow {
+                id: "@1".to_string(),
+                name: "alpha".to_string(),
+                status: None,
+                context: "ctx".to_string(),
+                panes: vec![
+                    PaneRow {
+                        id: "%1".to_string(),
+                        alias: None,
+                        status: None,
+                        context: "p1".to_string(),
+                        session_id: "@1".to_string(),
+                    },
+                    PaneRow {
+                        id: "%2".to_string(),
+                        alias: None,
+                        status: None,
+                        context: "p2".to_string(),
+                        session_id: "@1".to_string(),
+                    },
+                ],
+            },
+            session_row("@2", "beta"),
+        ];
+
+        let mut app =
+            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+        app.jump_to_session_index(1);
+
+        let selected = app.selected_row().expect("selected row");
+        match selected {
+            RowItem::Session(row) => assert_eq!(row.id, "@2"),
+            RowItem::Pane(_) => panic!("expected session row"),
+        }
     }
 }
