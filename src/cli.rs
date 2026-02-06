@@ -128,3 +128,111 @@ fn handle_rename(args: RenameArgs) -> Result<(), ContextError> {
 fn join_tokens(tokens: Vec<String>) -> String {
     tokens.join(" ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{load_contexts, session_key, AgentStatus};
+    use crate::test_utils::EnvGuard;
+
+    #[test]
+    fn join_tokens_joins_with_spaces() {
+        let joined = join_tokens(vec!["one".to_string(), "two".to_string()]);
+        assert_eq!(joined, "one two");
+    }
+
+    #[test]
+    fn handle_upsert_rejects_invalid_status() {
+        let args = UpsertArgs {
+            session_name: vec!["Alpha".to_string()],
+            session_id: None,
+            pane_id: None,
+            status: Some("not-a-status".to_string()),
+            context: None,
+        };
+
+        let err = handle_upsert(args).expect_err("expected invalid status");
+        match err {
+            ContextError::InvalidStatus(_) => {}
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn handle_upsert_session_persists_values() {
+        let mut env = EnvGuard::new("cli-upsert-session");
+        env.set_temp_home();
+
+        let args = UpsertArgs {
+            session_name: vec!["Alpha".to_string(), "Beta".to_string()],
+            session_id: Some("sid".to_string()),
+            pane_id: None,
+            status: Some("Working".to_string()),
+            context: Some(vec!["hello".to_string(), "world".to_string()]),
+        };
+
+        handle_upsert(args).expect("handle upsert");
+
+        let contexts = load_contexts().expect("load contexts");
+        let entry = contexts
+            .get(&session_key("Alpha Beta"))
+            .expect("session entry");
+        assert_eq!(entry.session_name.as_deref(), Some("Alpha Beta"));
+        assert_eq!(entry.session_id.as_deref(), Some("sid"));
+        assert_eq!(entry.session_status, Some(AgentStatus::Working));
+        assert_eq!(entry.session_context.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn handle_upsert_pane_updates_pane_context() {
+        let mut env = EnvGuard::new("cli-upsert-pane");
+        env.set_temp_home();
+
+        let args = UpsertArgs {
+            session_name: vec!["Alpha".to_string()],
+            session_id: None,
+            pane_id: Some("%1".to_string()),
+            status: Some("waiting".to_string()),
+            context: Some(vec!["pane".to_string(), "ctx".to_string()]),
+        };
+
+        handle_upsert(args).expect("handle upsert");
+
+        let contexts = load_contexts().expect("load contexts");
+        let session = contexts
+            .get(&session_key("Alpha"))
+            .expect("session entry");
+        let pane = session.panes.get("%1").expect("pane entry");
+        assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
+        assert_eq!(pane.pane_context.as_deref(), Some("pane ctx"));
+    }
+
+    #[test]
+    fn handle_rename_moves_session_context() {
+        let mut env = EnvGuard::new("cli-rename");
+        env.set_temp_home();
+
+        crate::context::upsert_session(
+            "Old".to_string(),
+            Some("sid".to_string()),
+            None,
+            None,
+        )
+        .expect("seed session");
+
+        let args = RenameArgs {
+            session_id: "sid".to_string(),
+            session_name: vec!["New".to_string(), "Name".to_string()],
+        };
+
+        handle_rename(args).expect("handle rename");
+
+        let contexts = load_contexts().expect("load contexts");
+        assert!(contexts.get(&session_key("Old")).is_none());
+        let entry = contexts
+            .get(&session_key("New Name"))
+            .expect("renamed entry");
+        assert_eq!(entry.session_id.as_deref(), Some("sid"));
+        assert_eq!(entry.session_name.as_deref(), Some("New Name"));
+    }
+}

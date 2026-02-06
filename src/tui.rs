@@ -13,7 +13,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use log::{debug, info};
 
 const DATA_NOT_RECEIVED: &str = "-";
-const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (l/h) expand/collapse | (r) refresh";
+const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9) jump | (l/h) expand/collapse | (r) refresh";
 
 #[derive(Error, Debug)]
 pub enum TuiError {
@@ -139,25 +139,35 @@ struct ColumnWidths {
     context: u16,
 }
 
+type FilterFn = Box<dyn Fn(&str, &[String]) -> Result<String, TuiError>>;
+
 struct App {
     state: TableState,
     sessions: Vec<SessionRow>,
     filtered_sessions: Vec<SessionRow>,
     rows: Vec<RowItem>,
+    session_index_by_id: HashMap<String, usize>,
     widths: ColumnWidths,
     search: SearchQuery,
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
+    jump_buffer: String,
+    filter: FilterFn,
 }
 
 impl App {
     /// Creates a list view of sessions and panes
     fn new(sessions: Vec<SessionRow>) -> Result<Self, TuiError> {
+        Self::new_with_filter(sessions, Box::new(run_fzf_filter))
+    }
+
+    fn new_with_filter(sessions: Vec<SessionRow>, filter: FilterFn) -> Result<Self, TuiError> {
         let mut app = Self {
             state: TableState::default(),
             filtered_sessions: sessions.clone(),
             sessions,
             rows: Vec::new(),
+            session_index_by_id: HashMap::new(),
             widths: ColumnWidths {
                 session: 0,
                 status: 0,
@@ -168,6 +178,8 @@ impl App {
             },
             mode: ListViewModes::NormalMode,
             expanded_sessions: HashSet::new(),
+            jump_buffer: String::new(),
+            filter,
         };
         app.rebuild_rows();
         app.ensure_selection();
@@ -187,8 +199,10 @@ impl App {
                     match key.code {
                         KeyCode::Esc => {
                             self.mode = ListViewModes::NormalMode;
+                            self.jump_buffer.clear();
                         }
                         KeyCode::Enter => {
+                            self.jump_buffer.clear();
                             self.switch_session()?;
                             return Ok(());
                         }
@@ -200,6 +214,7 @@ impl App {
                         KeyCode::Up => self.previous_row(),
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             self.mode = ListViewModes::NormalMode;
+                            self.jump_buffer.clear();
                         }
                         // Append a character to the search query
                         KeyCode::Char(c) => {
@@ -210,6 +225,10 @@ impl App {
                     }
                 } else {
                     // Normal mode keybindings
+                    let is_digit = matches!(key.code, KeyCode::Char(c) if c.is_ascii_digit());
+                    if !is_digit {
+                        self.jump_buffer.clear();
+                    }
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -225,11 +244,23 @@ impl App {
                         }
                         KeyCode::Char('j') | KeyCode::Down => self.next_row(),
                         KeyCode::Char('k') | KeyCode::Up => self.previous_row(),
+                        KeyCode::Char('g') => {
+                            self.select_first_session();
+                        }
+                        KeyCode::Char('G') => {
+                            self.select_last_session();
+                        }
                         KeyCode::Char('l') => self.expand_selected(),
                         KeyCode::Char('h') => self.collapse_selected(),
                         KeyCode::Char('r') => {
                             info!("tui refresh requested");
                             self.refresh_panes()?;
+                        }
+                        KeyCode::Char(c) if c.is_ascii_digit() => {
+                            self.jump_buffer.push(c);
+                            if let Ok(index) = self.jump_buffer.parse::<usize>() {
+                                self.jump_to_session_index(index);
+                            }
                         }
                         _ => {}
                     }
@@ -304,7 +335,7 @@ impl App {
             })
             .collect::<Vec<_>>();
 
-        let output = run_fzf_filter(&self.search.query, &candidates)?;
+        let output = (self.filter.as_ref())(&self.search.query, &candidates)?;
         let mut lines = output.lines();
         let _ = lines.next();
 
@@ -328,6 +359,12 @@ impl App {
     }
 
     fn rebuild_rows(&mut self) {
+        self.session_index_by_id = self
+            .filtered_sessions
+            .iter()
+            .enumerate()
+            .map(|(index, session)| (session.id.clone(), index))
+            .collect();
         let mut rows = Vec::new();
         for session in &self.filtered_sessions {
             rows.push(RowItem::Session(session.clone()));
@@ -338,7 +375,7 @@ impl App {
             }
         }
         self.rows = rows;
-        self.widths = measure_widths(&self.rows);
+        self.widths = self.measure_widths();
     }
 
     fn restore_selection(&mut self, previous: Option<RowKey>) {
@@ -481,7 +518,7 @@ impl App {
                 base_style = base_style.add_modifier(Modifier::DIM);
             }
             Row::new(vec![
-                Cell::from(row_label(item)),
+                Cell::from(self.row_label(item)),
                 Cell::from(status_text(row_status(item))).style(status_style(row_status(item))),
                 Cell::from(truncate_with_ellipsis(
                     &row_context(item),
@@ -518,6 +555,74 @@ impl App {
 
         frame.render_widget(footer, sections[0]);
         frame.render_widget(mode_widget, sections[1]);
+    }
+
+    fn row_label(&self, item: &RowItem) -> String {
+        match item {
+            RowItem::Session(row) => self
+                .session_index_by_id
+                .get(&row.id)
+                .map(|index| format!("{index}: {}", row.name))
+                .unwrap_or_else(|| row.name.clone()),
+            RowItem::Pane(row) => format!("  └─ {}", row.id),
+        }
+    }
+
+    fn measure_widths(&self) -> ColumnWidths {
+        let session = self
+            .rows
+            .iter()
+            .map(|item| UnicodeWidthStr::width(self.row_label(item).as_str()))
+            .max()
+            .unwrap_or(0)
+            .max(UnicodeWidthStr::width("Session"));
+        let status = self
+            .rows
+            .iter()
+            .map(|item| UnicodeWidthStr::width(status_text(row_status(item)).as_str()))
+            .max()
+            .unwrap_or(0)
+            .max(UnicodeWidthStr::width("Status"));
+        let context = self
+            .rows
+            .iter()
+            .map(|item| UnicodeWidthStr::width(row_context(item).as_str()))
+            .max()
+            .unwrap_or(0)
+            .max(UnicodeWidthStr::width("Context"));
+
+        #[allow(clippy::cast_possible_truncation)]
+        ColumnWidths {
+            session: session as u16,
+            status: status as u16,
+            context: context as u16,
+        }
+    }
+
+    fn select_first_session(&mut self) {
+        if let Some(index) = self.rows.iter().position(|row| matches!(row, RowItem::Session(_)))
+        {
+            self.state.select(Some(index));
+        }
+    }
+
+    fn select_last_session(&mut self) {
+        if let Some(index) = self.rows.iter().rposition(|row| matches!(row, RowItem::Session(_)))
+        {
+            self.state.select(Some(index));
+        }
+    }
+
+    fn jump_to_session_index(&mut self, index: usize) {
+        let Some(session) = self.filtered_sessions.get(index) else {
+            return;
+        };
+        if let Some(row_index) = self.rows.iter().position(|row| match row {
+            RowItem::Session(row) => row.id == session.id,
+            RowItem::Pane(_) => false,
+        }) {
+            self.state.select(Some(row_index));
+        }
     }
 }
 
@@ -789,13 +894,6 @@ fn collect_live_panes(panes: &[crate::tmux::TmuxPane]) -> HashMap<String, HashSe
     live
 }
 
-fn row_label(item: &RowItem) -> String {
-    match item {
-        RowItem::Session(row) => row.name.clone(),
-        RowItem::Pane(row) => format!("  └─ {}", row.id),
-    }
-}
-
 fn row_status(item: &RowItem) -> Option<&crate::context::AgentStatus> {
     match item {
         RowItem::Session(row) => row.status.as_ref(),
@@ -853,30 +951,147 @@ fn status_style(status: Option<&crate::context::AgentStatus>) -> Style {
     }
 }
 
-fn measure_widths(items: &[RowItem]) -> ColumnWidths {
-    let session = items
-        .iter()
-        .map(|item| UnicodeWidthStr::width(row_label(item).as_str()))
-        .max()
-        .unwrap_or(0)
-        .max(UnicodeWidthStr::width("Session"));
-    let status = items
-        .iter()
-        .map(|item| UnicodeWidthStr::width(status_text(row_status(item)).as_str()))
-        .max()
-        .unwrap_or(0)
-        .max(UnicodeWidthStr::width("Status"));
-    let context = items
-        .iter()
-        .map(|item| UnicodeWidthStr::width(row_context(item).as_str()))
-        .max()
-        .unwrap_or(0)
-        .max(UnicodeWidthStr::width("Context"));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{session_key, AgentStatus, PaneContext, SessionContext};
+    use crate::tmux::{TmuxPane, TmuxSession};
+    use std::collections::HashMap;
 
-    #[allow(clippy::cast_possible_truncation)]
-    ColumnWidths {
-        session: session as u16,
-        status: status as u16,
-        context: context as u16,
+    fn session_row(id: &str, name: &str) -> SessionRow {
+        SessionRow {
+            id: id.to_string(),
+            name: name.to_string(),
+            status: None,
+            context: "ctx".to_string(),
+            panes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn normalize_field_trims_and_defaults() {
+        let value = "  hello  ".to_string();
+        assert_eq!(normalize_field(Some(&value)), "hello");
+
+        let empty = "   ".to_string();
+        assert_eq!(normalize_field(Some(&empty)), DATA_NOT_RECEIVED);
+        assert_eq!(normalize_field(None), DATA_NOT_RECEIVED);
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_handles_bounds() {
+        assert_eq!(truncate_with_ellipsis("hello", 5), "hello");
+        assert_eq!(truncate_with_ellipsis("hello", 4), "h...");
+        assert_eq!(truncate_with_ellipsis("hello", 3), "...");
+        assert_eq!(truncate_with_ellipsis("hello", 2), "...");
+    }
+
+    #[test]
+    fn status_text_uses_default_for_missing() {
+        assert_eq!(status_text(Some(&AgentStatus::Done)), "done");
+        assert_eq!(status_text(None), DATA_NOT_RECEIVED);
+    }
+
+    #[test]
+    fn collect_live_panes_groups_by_session() {
+        let panes = vec![
+            TmuxPane {
+                session_name: "alpha".to_string(),
+                pane_id: "%1".to_string(),
+            },
+            TmuxPane {
+                session_name: "alpha".to_string(),
+                pane_id: "%2".to_string(),
+            },
+            TmuxPane {
+                session_name: "beta".to_string(),
+                pane_id: "%3".to_string(),
+            },
+        ];
+        let map = collect_live_panes(&panes);
+        assert_eq!(map.get("alpha").map(|set| set.len()), Some(2));
+        assert!(map
+            .get("alpha")
+            .expect("alpha set")
+            .contains("%1"));
+        assert!(map.get("beta").expect("beta set").contains("%3"));
+    }
+
+    #[test]
+    fn build_sessions_merges_context_and_sorts_panes() {
+        let sessions = vec![
+            TmuxSession {
+                id: "@1".to_string(),
+                name: "alpha".to_string(),
+            },
+            TmuxSession {
+                id: "@2".to_string(),
+                name: "beta".to_string(),
+            },
+        ];
+
+        let mut pane_map = HashMap::new();
+        pane_map.insert(
+            "%2".to_string(),
+            PaneContext {
+                pane_id: None,
+                pane_name: None,
+                pane_status: Some(AgentStatus::Done),
+                pane_context: Some("pctx".to_string()),
+            },
+        );
+
+        let mut contexts = HashMap::new();
+        contexts.insert(
+            session_key("alpha"),
+            SessionContext {
+                session_name: Some("alpha".to_string()),
+                session_id: None,
+                session_status: Some(AgentStatus::Working),
+                session_context: Some("ctx".to_string()),
+                panes: pane_map,
+            },
+        );
+
+        let panes = vec![
+            TmuxPane {
+                session_name: "alpha".to_string(),
+                pane_id: "%2".to_string(),
+            },
+            TmuxPane {
+                session_name: "alpha".to_string(),
+                pane_id: "%1".to_string(),
+            },
+        ];
+
+        let built = build_sessions(sessions, contexts, panes);
+        let alpha = built
+            .iter()
+            .find(|row| row.name == "alpha")
+            .expect("alpha row");
+        assert_eq!(alpha.status, Some(AgentStatus::Working));
+        assert_eq!(alpha.context, "ctx");
+        assert_eq!(alpha.panes.len(), 2);
+        assert_eq!(alpha.panes[0].id, "%1");
+        assert_eq!(alpha.panes[0].context, DATA_NOT_RECEIVED);
+        assert_eq!(alpha.panes[1].id, "%2");
+        assert_eq!(alpha.panes[1].status, Some(AgentStatus::Done));
+        assert_eq!(alpha.panes[1].context, "pctx");
+    }
+
+    #[test]
+    fn apply_search_with_uses_injected_filter() {
+        let sessions = vec![session_row("@1", "one"), session_row("@2", "two")];
+        let filter = Box::new(|query: &str, candidates: &[String]| {
+            assert_eq!(query, "one");
+            Ok(format!("{query}\n{}\n", candidates[0]))
+        });
+        let mut app = App::new_with_filter(sessions, filter).expect("app");
+        app.search.query = "one".to_string();
+
+        app.apply_search_with(None).expect("search");
+
+        assert_eq!(app.filtered_sessions.len(), 1);
+        assert_eq!(app.filtered_sessions[0].id, "@1");
     }
 }

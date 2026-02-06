@@ -94,3 +94,152 @@ pub fn switch_client(target: &str) -> Result<(), io::Error> {
     debug!("tmux switch-client target={}", target);
     Ok(())
 }
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use super::*;
+    use crate::test_utils::EnvGuard;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    fn setup_fake_tmux(env: &mut EnvGuard) -> PathBuf {
+        let bin_dir = env.temp_dir().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let script_path = bin_dir.join("tmux");
+        let script = r#"#!/bin/sh
+case "$1" in
+  list-sessions)
+    if [ "${TMUX_LIST_SESSIONS_EXIT:-0}" -ne 0 ]; then
+      echo "${TMUX_LIST_SESSIONS_ERR:-error}" 1>&2
+      exit "${TMUX_LIST_SESSIONS_EXIT}"
+    fi
+    printf "%s" "${TMUX_LIST_SESSIONS:-}"
+    exit 0
+    ;;
+  list-panes)
+    if [ "${TMUX_LIST_PANES_EXIT:-0}" -ne 0 ]; then
+      echo "${TMUX_LIST_PANES_ERR:-error}" 1>&2
+      exit "${TMUX_LIST_PANES_EXIT}"
+    fi
+    printf "%s" "${TMUX_LIST_PANES:-}"
+    exit 0
+    ;;
+  switch-client)
+    if [ "${TMUX_SWITCH_FAIL:-0}" -ne 0 ]; then
+      echo "${TMUX_SWITCH_ERR:-error}" 1>&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  *)
+    echo "unsupported" 1>&2
+    exit 1
+    ;;
+esac
+"#;
+        fs::write(&script_path, script).expect("write tmux script");
+        let mut perms = fs::metadata(&script_path)
+            .expect("metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).expect("chmod");
+
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_dir.display(), old_path);
+        env.set_var("PATH", new_path);
+        script_path
+    }
+
+    #[test]
+    fn list_sessions_parses_output() {
+        let mut env = EnvGuard::new("tmux-list-sessions");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_LIST_SESSIONS", "@1\tone\n@2\ttwo\n");
+        env.remove_var("TMUX_LIST_SESSIONS_EXIT");
+
+        let sessions = list_sessions().expect("list sessions");
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].id, "@1");
+        assert_eq!(sessions[0].name, "one");
+        assert_eq!(sessions[1].id, "@2");
+        assert_eq!(sessions[1].name, "two");
+    }
+
+    #[test]
+    fn list_sessions_skips_invalid_lines() {
+        let mut env = EnvGuard::new("tmux-list-sessions-invalid");
+        setup_fake_tmux(&mut env);
+        env.set_var(
+            "TMUX_LIST_SESSIONS",
+            " \n@1\tone\n\tmissing_id\n@2\t\n@3\tthree\n",
+        );
+        env.remove_var("TMUX_LIST_SESSIONS_EXIT");
+
+        let sessions = list_sessions().expect("list sessions");
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].id, "@1");
+        assert_eq!(sessions[1].id, "@3");
+    }
+
+    #[test]
+    fn list_sessions_returns_error_on_failure() {
+        let mut env = EnvGuard::new("tmux-list-sessions-error");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_LIST_SESSIONS_EXIT", "1");
+        env.set_var("TMUX_LIST_SESSIONS_ERR", "boom");
+
+        let err = list_sessions().expect_err("expected error");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "boom");
+    }
+
+    #[test]
+    fn list_panes_parses_output() {
+        let mut env = EnvGuard::new("tmux-list-panes");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_LIST_PANES", "alpha\t%1\nbeta\t%2\n");
+        env.remove_var("TMUX_LIST_PANES_EXIT");
+
+        let panes = list_panes().expect("list panes");
+        assert_eq!(panes.len(), 2);
+        assert_eq!(panes[0].session_name, "alpha");
+        assert_eq!(panes[0].pane_id, "%1");
+        assert_eq!(panes[1].session_name, "beta");
+        assert_eq!(panes[1].pane_id, "%2");
+    }
+
+    #[test]
+    fn list_panes_returns_error_on_failure() {
+        let mut env = EnvGuard::new("tmux-list-panes-error");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_LIST_PANES_EXIT", "1");
+        env.set_var("TMUX_LIST_PANES_ERR", "no panes");
+
+        let err = list_panes().expect_err("expected error");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "no panes");
+    }
+
+    #[test]
+    fn switch_client_success() {
+        let mut env = EnvGuard::new("tmux-switch-ok");
+        setup_fake_tmux(&mut env);
+        env.remove_var("TMUX_SWITCH_FAIL");
+
+        switch_client("@1").expect("switch client");
+    }
+
+    #[test]
+    fn switch_client_returns_error_on_failure() {
+        let mut env = EnvGuard::new("tmux-switch-error");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_SWITCH_FAIL", "1");
+        env.set_var("TMUX_SWITCH_ERR", "no client");
+
+        let err = switch_client("@1").expect_err("expected error");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "no client");
+    }
+}

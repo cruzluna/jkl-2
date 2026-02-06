@@ -286,3 +286,129 @@ fn context_path() -> Result<PathBuf, ContextError> {
     debug!("resolved context path={}", path.display());
     Ok(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::EnvGuard;
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn session_key_is_stable() {
+        let first = session_key("alpha");
+        let second = session_key("alpha");
+        assert_eq!(first, second);
+        assert_ne!(first, session_key("beta"));
+        assert_eq!(first.len(), 64);
+    }
+
+    #[test]
+    fn load_contexts_creates_missing_file() {
+        let mut env = EnvGuard::new("context-load");
+        env.set_temp_home();
+        let path = context_path().expect("context path");
+        assert!(!path.exists());
+
+        let contexts = load_contexts().expect("load contexts");
+
+        assert!(contexts.is_empty());
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn upsert_session_persists_fields() {
+        let mut env = EnvGuard::new("context-upsert-session");
+        env.set_temp_home();
+
+        let key = upsert_session(
+            "Alpha".to_string(),
+            Some("id1".to_string()),
+            Some(AgentStatus::Working),
+            Some("hello".to_string()),
+        )
+        .expect("upsert session");
+
+        let contexts = load_contexts().expect("load contexts");
+        let entry = contexts.get(&key).expect("session entry");
+        assert_eq!(entry.session_name.as_deref(), Some("Alpha"));
+        assert_eq!(entry.session_id.as_deref(), Some("id1"));
+        assert_eq!(entry.session_status, Some(AgentStatus::Working));
+        assert_eq!(entry.session_context.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn upsert_pane_adds_pane() {
+        let mut env = EnvGuard::new("context-upsert-pane");
+        env.set_temp_home();
+
+        upsert_pane(
+            "Alpha",
+            "%1",
+            Some("pane".to_string()),
+            Some(AgentStatus::Waiting),
+            Some("ctx".to_string()),
+        )
+        .expect("upsert pane");
+
+        let contexts = load_contexts().expect("load contexts");
+        let session = contexts
+            .get(&session_key("Alpha"))
+            .expect("session entry");
+        let pane = session.panes.get("%1").expect("pane entry");
+        assert_eq!(pane.pane_name.as_deref(), None);
+        assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
+        assert_eq!(pane.pane_context.as_deref(), Some("ctx"));
+    }
+
+    #[test]
+    fn rename_session_merges_without_overwriting_existing_fields() {
+        let mut env = EnvGuard::new("context-rename");
+        env.set_temp_home();
+
+        upsert_session("New".to_string(), None, None, Some("keep".to_string()))
+            .expect("seed target");
+        upsert_session(
+            "Old".to_string(),
+            Some("sid".to_string()),
+            None,
+            Some("old".to_string()),
+        )
+        .expect("seed source");
+
+        rename_session("sid", "New").expect("rename session");
+
+        let contexts = load_contexts().expect("load contexts");
+        assert!(contexts.get(&session_key("Old")).is_none());
+        let entry = contexts
+            .get(&session_key("New"))
+            .expect("renamed entry");
+        assert_eq!(entry.session_name.as_deref(), Some("New"));
+        assert_eq!(entry.session_id.as_deref(), Some("sid"));
+        assert_eq!(entry.session_context.as_deref(), Some("keep"));
+    }
+
+    #[test]
+    fn prune_panes_removes_stale_entries() {
+        let mut env = EnvGuard::new("context-prune");
+        env.set_temp_home();
+
+        upsert_pane("Alpha", "%1", None, None, None).expect("pane 1");
+        upsert_pane("Alpha", "%2", None, None, None).expect("pane 2");
+        upsert_pane("Beta", "%3", None, None, None).expect("pane 3");
+
+        let mut live = HashMap::new();
+        live.insert("Alpha".to_string(), HashSet::from([String::from("%1")]));
+
+        prune_panes(&live).expect("prune panes");
+
+        let contexts = load_contexts().expect("load contexts");
+        let alpha = contexts
+            .get(&session_key("Alpha"))
+            .expect("alpha session");
+        assert!(alpha.panes.contains_key("%1"));
+        assert!(!alpha.panes.contains_key("%2"));
+
+        let beta = contexts.get(&session_key("Beta")).expect("beta session");
+        assert!(beta.panes.contains_key("%3"));
+    }
+}
