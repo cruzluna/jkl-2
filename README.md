@@ -37,6 +37,8 @@ To include pre-releases:
 jkl update --prerelease
 ```
 
+Pre-releases are selected from tags that include `-rc.` (for example, `v0.2.0-rc.1`).
+
 If you installed via Cargo:
 
 ```

@@ -1,4 +1,6 @@
 use anyhow::{bail, Context, Result};
+use self_update::backends::github::ReleaseList;
+use self_update::update::Release;
 
 const REPO_OWNER: &str = "cruzluna";
 const REPO_NAME: &str = "jkl-2";
@@ -53,9 +55,30 @@ fn archive_name(target: &str) -> String {
     format!("{BIN_NAME}-{target}.tar.gz")
 }
 
+fn select_prerelease_tag(releases: &[Release]) -> Option<String> {
+    releases
+        .iter()
+        .find(|release| release.version.contains("-rc."))
+        .map(|release| format!("v{}", release.version))
+}
+
+fn find_prerelease_tag(config: &UpdateConfig, target: Option<&str>) -> Result<String> {
+    let mut builder = ReleaseList::configure();
+    builder
+        .repo_owner(config.repo_owner)
+        .repo_name(config.repo_name);
+    if let Some(target) = target {
+        builder.with_target(target);
+    }
+    let releases = builder.build()?.fetch()?;
+    select_prerelease_tag(&releases)
+        .ok_or_else(|| anyhow::anyhow!("no rc prerelease tags found"))
+}
+
 pub fn run(prerelease: bool) -> Result<()> {
     let config = update_config(prerelease);
     let current_version = self_update::cargo_crate_version!();
+    let target = detect_target().ok();
     let mut builder = self_update::backends::github::Update::configure();
     builder
         .repo_owner(config.repo_owner)
@@ -64,16 +87,18 @@ pub fn run(prerelease: bool) -> Result<()> {
         .show_download_progress(true)
         .current_version(current_version);
 
-    if let Ok(target) = detect_target() {
+    if let Some(target) = target.as_deref() {
         log::info!(
             "self-update target={} expected_asset={}",
             target,
-            archive_name(&target)
+            archive_name(target)
         );
     }
 
     if config.prerelease {
-        builder.use_pre_release(true);
+        let tag = find_prerelease_tag(&config, target.as_deref())
+            .context("find rc prerelease tag")?;
+        builder.target_version_tag(&tag);
     }
 
     let status = builder
@@ -94,6 +119,16 @@ pub fn run(prerelease: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn release(version: &str) -> Release {
+        Release {
+            name: version.to_string(),
+            version: version.to_string(),
+            date: "2025-01-01T00:00:00Z".to_string(),
+            body: None,
+            assets: Vec::new(),
+        }
+    }
 
     #[test]
     fn update_config_sets_repo_fields() {
@@ -138,5 +173,19 @@ mod tests {
     fn archive_name_uses_bin_and_target() {
         let name = archive_name("x86_64-unknown-linux-gnu");
         assert_eq!(name, "jkl-x86_64-unknown-linux-gnu.tar.gz");
+    }
+
+    #[test]
+    fn select_prerelease_tag_picks_rc_release() {
+        let releases = vec![release("0.1.0"), release("0.2.0-rc.1")];
+        let tag = select_prerelease_tag(&releases);
+        assert_eq!(tag.as_deref(), Some("v0.2.0-rc.1"));
+    }
+
+    #[test]
+    fn select_prerelease_tag_returns_none_when_missing() {
+        let releases = vec![release("0.1.0"), release("0.2.0")];
+        let tag = select_prerelease_tag(&releases);
+        assert!(tag.is_none());
     }
 }
