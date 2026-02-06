@@ -841,16 +841,16 @@ fn build_sessions(
                 debug!("  ✗ no context found for session={}", session.name);
             }
 
-            let status = context.and_then(|ctx| ctx.session_status.clone());
             let context_value =
                 normalize_field(context.and_then(|ctx| ctx.session_context.as_ref()));
+            let override_status = context.and_then(|ctx| ctx.session_status.clone());
 
             let mut pane_rows = panes_by_session
                 .get(&session.name)
                 .cloned()
                 .unwrap_or_default();
             pane_rows.sort();
-            let panes = pane_rows
+            let panes: Vec<PaneRow> = pane_rows
                 .into_iter()
                 .map(|pane_id| {
                     let pane_ctx = context.and_then(|ctx| ctx.panes.get(&pane_id));
@@ -866,6 +866,10 @@ fn build_sessions(
                     }
                 })
                 .collect();
+            let status = crate::context::effective_session_status(
+                override_status,
+                panes.iter().map(|pane| pane.status.clone()),
+            );
             SessionRow {
                 id: session.id,
                 name: session.name,

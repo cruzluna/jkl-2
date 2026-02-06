@@ -36,6 +36,7 @@ pub struct PaneContext {
 pub struct SessionContext {
     pub session_name: Option<String>,
     pub session_id: Option<String>,
+    // TODO: session_status might be deprecated once derived session statuses are stable.
     pub session_status: Option<AgentStatus>,
     pub session_context: Option<String>,
     #[serde(default)]
@@ -65,6 +66,51 @@ pub enum ContextError {
 
 pub fn session_key(session_name: &str) -> String {
     blake3::hash(session_name.as_bytes()).to_hex().to_string()
+}
+
+pub fn effective_session_status<I>(
+    override_status: Option<AgentStatus>,
+    pane_statuses: I,
+) -> Option<AgentStatus>
+where
+    I: IntoIterator<Item = Option<AgentStatus>>,
+{
+    if override_status.is_some() {
+        return override_status;
+    }
+
+    let mut working = 0usize;
+    let mut waiting = 0usize;
+    let mut done = 0usize;
+
+    for status in pane_statuses {
+        let Some(status) = status else {
+            continue;
+        };
+        match status {
+            AgentStatus::None => {}
+            AgentStatus::Working => working += 1,
+            // "idle" maps to Waiting in AgentStatus terms.
+            AgentStatus::Waiting => waiting += 1,
+            AgentStatus::Done => done += 1,
+        }
+    }
+
+    if working == 0 && waiting == 0 && done == 0 {
+        return None;
+    }
+
+    if waiting > working + done {
+        return Some(AgentStatus::Waiting);
+    }
+    if working + waiting > done {
+        return Some(AgentStatus::Working);
+    }
+    if done > working + waiting {
+        return Some(AgentStatus::Done);
+    }
+
+    None
 }
 
 /// Try to load the context file, create it if it doesn't exist
