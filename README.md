@@ -1,6 +1,12 @@
-# jkl
+<h1 align="center">jkl</h1>
 
-A CLI/TUI tool for inspecting tmux sessions.
+<p align="center"><strong>Inspect your agent statuses in tmux sessions.</strong></p>
+
+<p align="center">
+  <img src="docs/assets/preview.png" alt="jkl TUI preview" width="960" />
+</p>
+
+<p align="center">The better agent list view</p>
 
 ## Requirements
 
