@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use self_update::backends::github::ReleaseList;
 use self_update::update::Release;
 use std::path::PathBuf;
@@ -127,7 +127,7 @@ pub fn run(prerelease: bool) -> Result<()> {
         println!("To refresh Fig autocomplete, run: jkl-sync-fig-autocomplete");
     } else {
         println!(
-            "To refresh Fig autocomplete, run:\n  curl -fsSL https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/scripts/sync-fig-autocomplete.sh | bash"
+            "To refresh Fig autocomplete, run:\n  curl -fsSL https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/master/scripts/sync-fig-autocomplete.sh | bash"
         );
     }
 
