@@ -18,7 +18,7 @@
 ### Binary (recommended)
 
 ```
-curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/install.sh | bash
 ```
 
 Optional: set `JKL_INSTALL_DIR` to choose where binaries/scripts are installed.
