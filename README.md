@@ -69,6 +69,20 @@ Then refresh Fig autocomplete:
 curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/main/scripts/sync-fig-autocomplete.sh | bash
 ```
 
+## Uninstall
+
+Uninstall the `jkl` binary from its current install location:
+
+```
+jkl uninstall
+```
+
+Also remove local metadata/logs in `~/.config/jkl`:
+
+```
+jkl uninstall --purge-data
+```
+
 ### Release assets
 
 The update command and install script expect GitHub release assets named:
@@ -93,6 +107,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]`
 - Rename session entry: `jkl rename <session_id> <session_name...>`
 - Sync persisted metadata with live tmux state: `jkl sync`
+- Uninstall binary from current location: `jkl uninstall [--purge-data]`
 - Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
 
 Multi-word session names or context can be passed without quotes; use `--` to terminate positional values if needed.

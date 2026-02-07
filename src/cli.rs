@@ -19,6 +19,7 @@ enum Commands {
     Rename(RenameArgs),
     Sync,
     Update(UpdateArgs),
+    Uninstall(UninstallArgs),
 }
 
 #[derive(Args)]
@@ -65,6 +66,13 @@ struct UpdateArgs {
     prerelease: bool,
 }
 
+#[derive(Args)]
+struct UninstallArgs {
+    /// Also remove ~/.config/jkl (session metadata + logs).
+    #[arg(long)]
+    purge_data: bool,
+}
+
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     debug!("cli parsed");
@@ -88,6 +96,10 @@ pub fn run() -> Result<()> {
         Commands::Update(args) => {
             info!("command=update");
             handle_update(args)?
+        }
+        Commands::Uninstall(args) => {
+            info!("command=uninstall");
+            handle_uninstall(args)?
         }
     };
     Ok(())
@@ -164,6 +176,10 @@ fn handle_sync() -> Result<()> {
 
 fn handle_update(args: UpdateArgs) -> Result<()> {
     crate::update::run(args.prerelease)
+}
+
+fn handle_uninstall(args: UninstallArgs) -> Result<()> {
+    crate::uninstall::run(args.purge_data)
 }
 
 fn join_tokens(tokens: Vec<String>) -> String {

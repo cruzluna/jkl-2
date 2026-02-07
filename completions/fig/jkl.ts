@@ -168,6 +168,16 @@ const completionSpec: Fig.Spec = {
         },
       ],
     },
+    {
+      name: "uninstall",
+      description: "Uninstall jkl from the current install location",
+      options: [
+        {
+          name: "--purge-data",
+          description: "Also remove ~/.config/jkl (session metadata and logs)",
+        },
+      ],
+    },
   ],
 };
 

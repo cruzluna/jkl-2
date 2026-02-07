@@ -4,6 +4,7 @@ mod context;
 mod test_utils;
 mod tmux;
 mod tui;
+mod uninstall;
 mod update;
 
 fn main() -> Result<(), anyhow::Error> {
