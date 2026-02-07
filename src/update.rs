@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use self_update::backends::github::ReleaseList;
 use self_update::update::Release;
+use std::path::PathBuf;
 
 const REPO_OWNER: &str = "cruzluna";
 const REPO_NAME: &str = "jkl-2";
@@ -74,6 +75,16 @@ fn find_prerelease_tag(config: &UpdateConfig, target: Option<&str>) -> Result<St
     select_prerelease_tag(&releases).ok_or_else(|| anyhow::anyhow!("no rc prerelease tags found"))
 }
 
+fn command_in_path(command: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let candidate: PathBuf = dir.join(command);
+        candidate.is_file()
+    })
+}
+
 pub fn run(prerelease: bool) -> Result<()> {
     let config = update_config(prerelease);
     let current_version = self_update::cargo_crate_version!();
@@ -110,6 +121,14 @@ pub fn run(prerelease: bool) -> Result<()> {
         log::info!("updated to {}", status.version());
     } else {
         log::info!("already up-to-date");
+    }
+
+    if command_in_path("jkl-sync-fig-autocomplete") {
+        println!("To refresh Fig autocomplete, run: jkl-sync-fig-autocomplete");
+    } else {
+        println!(
+            "To refresh Fig autocomplete, run:\n  curl -fsSL https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/scripts/sync-fig-autocomplete.sh | bash"
+        );
     }
 
     Ok(())

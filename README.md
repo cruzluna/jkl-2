@@ -21,7 +21,17 @@
 curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/main/install.sh | bash
 ```
 
-Optional: set `JKL_INSTALL_DIR` to choose where the binary is installed.
+Optional: set `JKL_INSTALL_DIR` to choose where binaries/scripts are installed.
+
+The installer adds:
+
+- `jkl`
+- `jkl-sync-fig-autocomplete` (if you answer `y` to the install prompt)
+
+To force this in non-interactive installs, set:
+
+- `JKL_INSTALL_FIG_COMPLETIONS=1` to install
+- `JKL_INSTALL_FIG_COMPLETIONS=0` to skip
 
 ### Cargo
 
@@ -35,12 +45,14 @@ If needed, ensure `~/.cargo/bin` is on your `PATH`.
 
 ```
 jkl update
+jkl-sync-fig-autocomplete
 ```
 
 To include pre-releases:
 
 ```
 jkl update --prerelease
+jkl-sync-fig-autocomplete
 ```
 
 Pre-releases are selected from tags that include `-rc.` (for example, `v0.2.0-rc.1`).
@@ -49,6 +61,12 @@ If you installed via Cargo:
 
 ```
 cargo install --git https://github.com/cruzluna/jkl-2 --force
+```
+
+Then refresh Fig autocomplete:
+
+```
+curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/main/scripts/sync-fig-autocomplete.sh | bash
 ```
 
 ### Release assets
@@ -122,6 +140,36 @@ set -g @jkl_force_bind_keys 'on'
 ```
 
 ## Integrations
+
+### Fig autocomplete
+
+A standalone Fig spec for `jkl` lives at:
+
+- `completions/fig/jkl.ts`
+
+User sync script:
+
+- `scripts/sync-fig-autocomplete.sh`
+
+Installed binary helper (from `install.sh`):
+
+- `jkl-sync-fig-autocomplete`
+
+Run either:
+
+```
+jkl-sync-fig-autocomplete
+```
+
+or:
+
+```
+curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/main/scripts/sync-fig-autocomplete.sh | bash
+```
+
+Maintainer/publishing notes are in:
+
+- `docs/fig-autocomplete.md`
 
 ### Claude Code hooks
 
