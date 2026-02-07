@@ -71,7 +71,7 @@ chmod +x "$INSTALL_DIR/$BIN_NAME"
 
 echo "Installed $BIN_NAME to $INSTALL_DIR/$BIN_NAME"
 
-sync_script_url="https://raw.githubusercontent.com/${REPO}/main/scripts/sync-fig-autocomplete.sh"
+sync_script_url="https://raw.githubusercontent.com/${REPO}/master/scripts/sync-fig-autocomplete.sh"
 if should_install_fig_helper; then
   if curl -fsSL "$sync_script_url" -o "$INSTALL_DIR/$SYNC_SCRIPT_NAME"; then
     chmod +x "$INSTALL_DIR/$SYNC_SCRIPT_NAME"

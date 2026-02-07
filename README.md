@@ -66,7 +66,7 @@ cargo install --git https://github.com/cruzluna/jkl-2 --force
 Then refresh Fig autocomplete:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/main/scripts/sync-fig-autocomplete.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/scripts/sync-fig-autocomplete.sh | bash
 ```
 
 ## Uninstall
@@ -179,7 +179,7 @@ jkl-sync-fig-autocomplete
 or:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/main/scripts/sync-fig-autocomplete.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/scripts/sync-fig-autocomplete.sh | bash
 ```
 
 Maintainer/publishing notes are in:

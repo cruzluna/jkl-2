@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO="cruzluna/jkl-2"
-DEFAULT_SPEC_URL="https://raw.githubusercontent.com/${REPO}/main/completions/fig/jkl.ts"
+DEFAULT_SPEC_URL="https://raw.githubusercontent.com/${REPO}/master/completions/fig/jkl.ts"
 SPEC_URL="${JKL_FIG_SPEC_URL:-$DEFAULT_SPEC_URL}"
 SPEC_SOURCE="$REPO_ROOT/completions/fig/jkl.ts"
 
