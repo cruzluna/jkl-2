@@ -74,6 +74,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Upsert session metadata: `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
 - Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]`
 - Rename session entry: `jkl rename <session_id> <session_name...>`
+- Sync persisted metadata with live tmux state: `jkl sync`
 - Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
 
 Multi-word session names or context can be passed without quotes; use `--` to terminate positional values if needed.
@@ -120,6 +121,74 @@ By default the plugin does not override existing tmux/user bindings. If you want
 set -g @jkl_force_bind_keys 'on'
 ```
 
+## Integrations
+
+### Claude Code hooks
+
+Claude Code hooks can be configured in `~/.claude/settings.json` (user), `.claude/settings.json` (project), or `.claude/settings.local.json` (local project). The example below marks the current tmux pane as `working` when you submit a prompt, and `waiting` when Claude stops.
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Docs:
+
+- https://code.claude.com/docs/en/hooks-guide
+- https://code.claude.com/docs/en/hooks
+
+### Kiro CLI hooks
+
+Kiro CLI hooks are defined in an agent config file (for example `.kiro/agents/jkl.json` in a project, or `~/.kiro/agents/jkl.json` globally). The same pattern can be applied with `userPromptSubmit` and `stop` hooks:
+
+```json
+{
+  "name": "jkl",
+  "description": "Sync jkl status with Kiro activity",
+  "hooks": {
+    "userPromptSubmit": [
+      {
+        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working"
+      }
+    ],
+    "stop": [
+      {
+        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting"
+      }
+    ]
+  }
+}
+```
+
+Kiro also supports `preToolUse` and `postToolUse` hooks with tool `matcher` patterns (for example `execute_bash` or `fs_write`) if you want finer-grained automation.
+
+Docs:
+
+- https://kiro.dev/docs/cli/hooks/
+- https://kiro.dev/docs/cli/custom-agents/configuration-reference/
+
 ## Session Context
 
 The TUI reads optional metadata from `~/.config/jkl/session_context.json`. If the file does not exist, it is created with `{}` the first time you run the TUI.
@@ -148,6 +217,14 @@ Upsert examples:
 jkl upsert "work" --status working --context "my project"
 jkl upsert "work" --pane-id %1 --status working --context "focus time"
 ```
+
+Cleanup/repair example:
+
+```
+jkl sync
+```
+
+`jkl sync` keeps only sessions/panes that still exist in tmux. Session matching is ID-first; if no ID match is found it falls back to session name. When a session is matched by ID but the name changed, jkl updates `session_name` and re-keys the JSON entry to `blake3(new_session_name)`.
 
 Status values:
 
@@ -190,6 +267,7 @@ Examples:
 
 - `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]` upserts session metadata.
 - `jkl upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]` upserts pane metadata.
+- `jkl sync` removes stale session/pane metadata and migrates renamed sessions using tmux `session_id`.
 
 Sample commands:
 

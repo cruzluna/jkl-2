@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use self_update::backends::github::ReleaseList;
 use self_update::update::Release;
 
@@ -71,8 +71,7 @@ fn find_prerelease_tag(config: &UpdateConfig, target: Option<&str>) -> Result<St
         builder.with_target(target);
     }
     let releases = builder.build()?.fetch()?;
-    select_prerelease_tag(&releases)
-        .ok_or_else(|| anyhow::anyhow!("no rc prerelease tags found"))
+    select_prerelease_tag(&releases).ok_or_else(|| anyhow::anyhow!("no rc prerelease tags found"))
 }
 
 pub fn run(prerelease: bool) -> Result<()> {
@@ -96,8 +95,8 @@ pub fn run(prerelease: bool) -> Result<()> {
     }
 
     if config.prerelease {
-        let tag = find_prerelease_tag(&config, target.as_deref())
-            .context("find rc prerelease tag")?;
+        let tag =
+            find_prerelease_tag(&config, target.as_deref()).context("find rc prerelease tag")?;
         builder.target_version_tag(&tag);
     }
 

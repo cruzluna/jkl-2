@@ -13,6 +13,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use log::{debug, info};
 
 const DATA_NOT_RECEIVED: &str = "-";
+// TODO: Will make this configurable in the future.
+const PANE_LABEL_MAX_WIDTH: usize = 10;
 const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (r) refresh";
 
 #[derive(Error, Debug)]
@@ -560,7 +562,7 @@ impl App {
                 .get(&row.id)
                 .map(|index| format!("{index}: {}", row.name))
                 .unwrap_or_else(|| row.name.clone()),
-            RowItem::Pane(row) => format!("  └─ {}", row.id),
+            RowItem::Pane(row) => format!("  └─ {}", pane_label(row)),
         }
     }
 
@@ -596,14 +598,20 @@ impl App {
     }
 
     fn select_first_session(&mut self) {
-        if let Some(index) = self.rows.iter().position(|row| matches!(row, RowItem::Session(_)))
+        if let Some(index) = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, RowItem::Session(_)))
         {
             self.state.select(Some(index));
         }
     }
 
     fn select_last_session(&mut self) {
-        if let Some(index) = self.rows.iter().rposition(|row| matches!(row, RowItem::Session(_)))
+        if let Some(index) = self
+            .rows
+            .iter()
+            .rposition(|row| matches!(row, RowItem::Session(_)))
         {
             self.state.select(Some(index));
         }
@@ -850,12 +858,19 @@ fn build_sessions(
                 .into_iter()
                 .map(|pane_id| {
                     let pane_ctx = context.and_then(|ctx| ctx.panes.get(&pane_id));
+                    let pane_alias = pane_ctx.and_then(|pane| {
+                        pane.pane_name
+                            .as_ref()
+                            .map(|name| name.trim())
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_string)
+                    });
                     let pane_status = pane_ctx.and_then(|pane| pane.pane_status.clone());
                     let pane_context_value =
                         normalize_field(pane_ctx.and_then(|pane| pane.pane_context.as_ref()));
                     PaneRow {
                         id: pane_id,
-                        alias: None,
+                        alias: pane_alias,
                         status: pane_status,
                         context: pane_context_value,
                         session_id: session.id.clone(),
@@ -908,17 +923,18 @@ fn row_context(item: &RowItem) -> String {
     }
 }
 
+fn pane_label(row: &PaneRow) -> String {
+    let base = row.alias.as_deref().unwrap_or(&row.id);
+    truncate_with_ellipsis(base, PANE_LABEL_MAX_WIDTH)
+}
+
 fn meta_jump_index(c: char) -> Option<usize> {
     let lower = c.to_ascii_lowercase();
     if !lower.is_ascii_alphabetic() {
         return None;
     }
     let offset = (lower as u8).saturating_sub(b'a') as usize;
-    if offset < 26 {
-        Some(10 + offset)
-    } else {
-        None
-    }
+    if offset < 26 { Some(10 + offset) } else { None }
 }
 
 fn normalize_field(value: Option<&String>) -> String {
@@ -967,7 +983,7 @@ fn status_style(status: Option<&crate::context::AgentStatus>) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{session_key, AgentStatus, PaneContext, SessionContext};
+    use crate::context::{AgentStatus, PaneContext, SessionContext, session_key};
     use crate::tmux::{TmuxPane, TmuxSession};
     use std::collections::HashMap;
 
@@ -1023,10 +1039,7 @@ mod tests {
         ];
         let map = collect_live_panes(&panes);
         assert_eq!(map.get("alpha").map(|set| set.len()), Some(2));
-        assert!(map
-            .get("alpha")
-            .expect("alpha set")
-            .contains("%1"));
+        assert!(map.get("alpha").expect("alpha set").contains("%1"));
         assert!(map.get("beta").expect("beta set").contains("%3"));
     }
 
@@ -1048,7 +1061,7 @@ mod tests {
             "%2".to_string(),
             PaneContext {
                 pane_id: None,
-                pane_name: None,
+                pane_name: Some("pane-two".to_string()),
                 pane_status: Some(AgentStatus::Done),
                 pane_context: Some("pctx".to_string()),
             },
@@ -1088,6 +1101,7 @@ mod tests {
         assert_eq!(alpha.panes[0].id, "%1");
         assert_eq!(alpha.panes[0].context, DATA_NOT_RECEIVED);
         assert_eq!(alpha.panes[1].id, "%2");
+        assert_eq!(alpha.panes[1].alias.as_deref(), Some("pane-two"));
         assert_eq!(alpha.panes[1].status, Some(AgentStatus::Done));
         assert_eq!(alpha.panes[1].context, "pctx");
     }
@@ -1123,6 +1137,30 @@ mod tests {
         let app = App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
         assert_eq!(app.row_label(&app.rows[0]), "0: alpha");
         assert_eq!(app.row_label(&app.rows[1]), "1: beta");
+    }
+
+    #[test]
+    fn row_label_prefers_pane_alias_and_truncates_to_limit() {
+        let sessions = vec![SessionRow {
+            id: "@1".to_string(),
+            name: "alpha".to_string(),
+            status: None,
+            context: "ctx".to_string(),
+            panes: vec![PaneRow {
+                id: "%1".to_string(),
+                alias: Some("verylongalias".to_string()),
+                status: None,
+                context: "p1".to_string(),
+                session_id: "@1".to_string(),
+            }],
+        }];
+
+        let mut app =
+            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+
+        assert_eq!(app.row_label(&app.rows[1]), "  └─ verylon...");
     }
 
     #[test]

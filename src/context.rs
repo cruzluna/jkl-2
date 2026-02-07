@@ -49,6 +49,13 @@ pub type PaneId = String;
 pub type ContextJson = HashMap<SessionKey, SessionContext>;
 pub type PaneContextJson = HashMap<PaneId, PaneContext>;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SyncSummary {
+    pub removed_sessions: usize,
+    pub removed_panes: usize,
+    pub renamed_sessions: usize,
+}
+
 // TODO: these are too specific, should generalize
 #[derive(Error, Debug)]
 pub enum ContextError {
@@ -232,6 +239,88 @@ pub fn rename_session(session_id: &str, session_name: &str) -> Result<(), Contex
     Ok(())
 }
 
+pub fn sync_with_tmux(
+    live_sessions: &[crate::tmux::TmuxSession],
+    live_panes: &[crate::tmux::TmuxPane],
+) -> Result<SyncSummary, ContextError> {
+    info!(
+        "syncing contexts against tmux: {} sessions, {} panes",
+        live_sessions.len(),
+        live_panes.len()
+    );
+    let contexts = load_contexts()?;
+
+    let live_by_id: HashMap<&str, &crate::tmux::TmuxSession> = live_sessions
+        .iter()
+        .map(|session| (session.id.as_str(), session))
+        .collect();
+    let live_by_name: HashMap<&str, &crate::tmux::TmuxSession> = live_sessions
+        .iter()
+        .map(|session| (session.name.as_str(), session))
+        .collect();
+
+    let mut live_pane_ids: HashMap<String, HashSet<String>> = HashMap::new();
+    for pane in live_panes {
+        live_pane_ids
+            .entry(pane.session_name.clone())
+            .or_default()
+            .insert(pane.pane_id.clone());
+    }
+
+    let mut summary = SyncSummary::default();
+    let mut synced = HashMap::new();
+    for mut context in contexts.into_values() {
+        let matched_session = context
+            .session_id
+            .as_deref()
+            .and_then(|id| live_by_id.get(id).copied())
+            .or_else(|| {
+                context
+                    .session_name
+                    .as_deref()
+                    .and_then(|name| live_by_name.get(name).copied())
+            });
+
+        let Some(live_session) = matched_session else {
+            summary.removed_sessions += 1;
+            summary.removed_panes += context.panes.len();
+            continue;
+        };
+
+        if context
+            .session_name
+            .as_deref()
+            .is_some_and(|name| name != live_session.name)
+        {
+            summary.renamed_sessions += 1;
+        }
+
+        context.session_name = Some(live_session.name.clone());
+        context.session_id = Some(live_session.id.clone());
+
+        let before_panes = context.panes.len();
+        if let Some(live_ids) = live_pane_ids.get(&live_session.name) {
+            context
+                .panes
+                .retain(|pane_id, _| live_ids.contains(pane_id));
+        } else {
+            context.panes.clear();
+        }
+        summary.removed_panes += before_panes.saturating_sub(context.panes.len());
+
+        let key = session_key(&live_session.name);
+        let target = synced.entry(key).or_default();
+        merge_context(target, context);
+    }
+
+    info!(
+        "sync complete: removed_sessions={} removed_panes={} renamed_sessions={}",
+        summary.removed_sessions, summary.removed_panes, summary.renamed_sessions
+    );
+    save_contexts(&synced)?;
+    Ok(summary)
+}
+
 pub fn prune_panes(live_panes: &HashMap<String, HashSet<String>>) -> Result<(), Box<dyn Error>> {
     debug!("pruning panes for {} sessions", live_panes.len());
     let mut contexts = load_contexts()?;
@@ -289,12 +378,24 @@ fn merge_context(target: &mut SessionContext, source: SessionContext) {
         target.session_context = source.session_context;
     }
     for (pane_id, pane) in source.panes {
+        let PaneContext {
+            pane_id: source_pane_id,
+            pane_name: source_pane_name,
+            pane_status: source_pane_status,
+            pane_context: source_pane_context,
+        } = pane;
         let entry = target.panes.entry(pane_id).or_default();
+        if entry.pane_id.is_none() {
+            entry.pane_id = source_pane_id;
+        }
+        if entry.pane_name.is_none() {
+            entry.pane_name = source_pane_name;
+        }
         if entry.pane_status.is_none() {
-            entry.pane_status = pane.pane_status;
+            entry.pane_status = source_pane_status;
         }
         if entry.pane_context.is_none() {
-            entry.pane_context = pane.pane_context;
+            entry.pane_context = source_pane_context;
         }
     }
 }
@@ -337,6 +438,7 @@ fn context_path() -> Result<PathBuf, ContextError> {
 mod tests {
     use super::*;
     use crate::test_utils::EnvGuard;
+    use crate::tmux::{TmuxPane, TmuxSession};
     use std::collections::{HashMap, HashSet};
 
     #[test]
@@ -397,11 +499,9 @@ mod tests {
         .expect("upsert pane");
 
         let contexts = load_contexts().expect("load contexts");
-        let session = contexts
-            .get(&session_key("Alpha"))
-            .expect("session entry");
+        let session = contexts.get(&session_key("Alpha")).expect("session entry");
         let pane = session.panes.get("%1").expect("pane entry");
-        assert_eq!(pane.pane_name.as_deref(), None);
+        assert_eq!(pane.pane_name.as_deref(), Some("pane"));
         assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
         assert_eq!(pane.pane_context.as_deref(), Some("ctx"));
     }
@@ -425,9 +525,7 @@ mod tests {
 
         let contexts = load_contexts().expect("load contexts");
         assert!(contexts.get(&session_key("Old")).is_none());
-        let entry = contexts
-            .get(&session_key("New"))
-            .expect("renamed entry");
+        let entry = contexts.get(&session_key("New")).expect("renamed entry");
         assert_eq!(entry.session_name.as_deref(), Some("New"));
         assert_eq!(entry.session_id.as_deref(), Some("sid"));
         assert_eq!(entry.session_context.as_deref(), Some("keep"));
@@ -448,13 +546,96 @@ mod tests {
         prune_panes(&live).expect("prune panes");
 
         let contexts = load_contexts().expect("load contexts");
-        let alpha = contexts
-            .get(&session_key("Alpha"))
-            .expect("alpha session");
+        let alpha = contexts.get(&session_key("Alpha")).expect("alpha session");
         assert!(alpha.panes.contains_key("%1"));
         assert!(!alpha.panes.contains_key("%2"));
 
         let beta = contexts.get(&session_key("Beta")).expect("beta session");
         assert!(beta.panes.contains_key("%3"));
+    }
+
+    #[test]
+    fn sync_with_tmux_rekeys_renamed_session_and_removes_stale_data() {
+        let mut env = EnvGuard::new("context-sync-rename");
+        env.set_temp_home();
+
+        upsert_session(
+            "old-name".to_string(),
+            Some("@1".to_string()),
+            Some(AgentStatus::Working),
+            Some("ctx".to_string()),
+        )
+        .expect("seed renamed session");
+        upsert_pane("old-name", "%1", None, None, Some("keep".to_string())).expect("pane keep");
+        upsert_pane("old-name", "%9", None, None, Some("drop".to_string())).expect("pane drop");
+
+        upsert_session("gone".to_string(), Some("@9".to_string()), None, None)
+            .expect("seed stale session");
+        upsert_pane("gone", "%3", None, None, None).expect("stale pane");
+
+        let live_sessions = vec![TmuxSession {
+            id: "@1".to_string(),
+            name: "new-name".to_string(),
+        }];
+        let live_panes = vec![TmuxPane {
+            session_name: "new-name".to_string(),
+            pane_id: "%1".to_string(),
+        }];
+
+        let summary = sync_with_tmux(&live_sessions, &live_panes).expect("sync contexts");
+        assert_eq!(
+            summary,
+            SyncSummary {
+                removed_sessions: 1,
+                removed_panes: 2,
+                renamed_sessions: 1,
+            }
+        );
+
+        let contexts = load_contexts().expect("load contexts");
+        assert!(contexts.get(&session_key("old-name")).is_none());
+        assert!(contexts.get(&session_key("gone")).is_none());
+
+        let renamed = contexts
+            .get(&session_key("new-name"))
+            .expect("renamed session");
+        assert_eq!(renamed.session_name.as_deref(), Some("new-name"));
+        assert_eq!(renamed.session_id.as_deref(), Some("@1"));
+        assert!(renamed.panes.contains_key("%1"));
+        assert!(!renamed.panes.contains_key("%9"));
+    }
+
+    #[test]
+    fn sync_with_tmux_falls_back_to_name_when_session_id_mismatch() {
+        let mut env = EnvGuard::new("context-sync-fallback-name");
+        env.set_temp_home();
+
+        upsert_session("alpha".to_string(), Some("@old".to_string()), None, None)
+            .expect("seed session");
+        upsert_pane("alpha", "%1", None, None, None).expect("seed pane");
+
+        let live_sessions = vec![TmuxSession {
+            id: "@new".to_string(),
+            name: "alpha".to_string(),
+        }];
+        let live_panes = vec![TmuxPane {
+            session_name: "alpha".to_string(),
+            pane_id: "%1".to_string(),
+        }];
+
+        let summary = sync_with_tmux(&live_sessions, &live_panes).expect("sync contexts");
+        assert_eq!(
+            summary,
+            SyncSummary {
+                removed_sessions: 0,
+                removed_panes: 0,
+                renamed_sessions: 0,
+            }
+        );
+
+        let contexts = load_contexts().expect("load contexts");
+        let alpha = contexts.get(&session_key("alpha")).expect("alpha session");
+        assert_eq!(alpha.session_id.as_deref(), Some("@new"));
+        assert!(alpha.panes.contains_key("%1"));
     }
 }

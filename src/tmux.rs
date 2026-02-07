@@ -140,9 +140,7 @@ case "$1" in
 esac
 "#;
         fs::write(&script_path, script).expect("write tmux script");
-        let mut perms = fs::metadata(&script_path)
-            .expect("metadata")
-            .permissions();
+        let mut perms = fs::metadata(&script_path).expect("metadata").permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&script_path, perms).expect("chmod");
 
