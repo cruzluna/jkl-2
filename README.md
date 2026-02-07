@@ -156,36 +156,6 @@ set -g @jkl_force_bind_keys 'on'
 
 ## Integrations
 
-### Fig autocomplete
-
-A standalone Fig spec for `jkl` lives at:
-
-- `completions/fig/jkl.ts`
-
-User sync script:
-
-- `scripts/sync-fig-autocomplete.sh`
-
-Installed binary helper (from `install.sh`):
-
-- `jkl-sync-fig-autocomplete`
-
-Run either:
-
-```
-jkl-sync-fig-autocomplete
-```
-
-or:
-
-```
-curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/scripts/sync-fig-autocomplete.sh | bash
-```
-
-Maintainer/publishing notes are in:
-
-- `docs/fig-autocomplete.md`
-
 ### Claude Code hooks
 
 Claude Code hooks can be configured in `~/.claude/settings.json` (user), `.claude/settings.json` (project), or `.claude/settings.local.json` (local project). The example below marks the current tmux pane as `working` when you submit a prompt, and `waiting` when Claude stops.
@@ -251,6 +221,32 @@ Docs:
 
 - https://kiro.dev/docs/cli/hooks/
 - https://kiro.dev/docs/cli/custom-agents/configuration-reference/
+
+### Fig autocomplete
+
+A standalone Fig spec for `jkl` lives at:
+
+- `completions/fig/jkl.ts`
+
+User sync script:
+
+- `scripts/sync-fig-autocomplete.sh`
+
+Installed binary helper (from `install.sh`):
+
+- `jkl-sync-fig-autocomplete`
+
+Run either:
+
+```
+jkl-sync-fig-autocomplete
+```
+
+or:
+
+```
+curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/scripts/sync-fig-autocomplete.sh | bash
+```
 
 ## Session Context
 
