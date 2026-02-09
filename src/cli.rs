@@ -14,6 +14,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Ai(AiArgs),
     Tui(TuiArgs),
     Upsert(UpsertArgs),
     Rename(RenameArgs),
@@ -34,6 +35,24 @@ struct TuiArgs {
     /// The ID of the pane to open the status selector popup for
     #[arg(long)]
     pane_id: Option<String>,
+}
+
+#[derive(Args)]
+struct AiArgs {
+    #[command(subcommand)]
+    command: AiCommands,
+}
+
+#[derive(Subcommand)]
+enum AiCommands {
+    AgentsMd(AgentsMdArgs),
+}
+
+#[derive(Args)]
+struct AgentsMdArgs {
+    /// Root directory to search for AGENTS.md files.
+    #[arg(default_value = ".", value_name = "PATH")]
+    root: String,
 }
 
 #[derive(Args)]
@@ -68,7 +87,7 @@ struct UpdateArgs {
 
 #[derive(Args)]
 struct UninstallArgs {
-    /// Also remove ~/.config/jkl (session metadata + logs).
+    /// Also remove the jkl config directory (session metadata + logs).
     #[arg(long)]
     purge_data: bool,
 }
@@ -77,6 +96,10 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse();
     debug!("cli parsed");
     match cli.command {
+        Commands::Ai(args) => {
+            info!("command=ai");
+            handle_ai(args)?
+        }
         Commands::Tui(args) => {
             info!("command=tui");
             handle_tui(args)?
@@ -103,6 +126,20 @@ pub fn run() -> Result<()> {
         }
     };
     Ok(())
+}
+
+fn handle_ai(args: AiArgs) -> Result<(), anyhow::Error> {
+    match args.command {
+        AiCommands::AgentsMd(args) => {
+            let root = std::path::Path::new(&args.root);
+            let summary = crate::agents::append_basic_instructions(root)?;
+            println!(
+                "Updated {} AGENTS.md files (skipped {})",
+                summary.files_updated, summary.files_skipped
+            );
+            Ok(())
+        }
+    }
 }
 
 fn handle_tui(args: TuiArgs) -> Result<(), TuiError> {

@@ -69,6 +69,8 @@ pub enum ContextError {
     FailedToSave(String),
     #[error("Invalid status: {0}")]
     InvalidStatus(String),
+    #[error("Missing config directory")]
+    MissingConfigDir,
 }
 
 pub fn session_key(session_name: &str) -> String {
@@ -425,11 +427,10 @@ fn save_contexts(contexts: &ContextJson) -> Result<(), ContextError> {
 }
 
 /// Get the path to the context file
-/// Should return $HOME/.config/jkl/session_context.json
+/// Should return the OS config directory + /jkl/session_context.json
 fn context_path() -> Result<PathBuf, ContextError> {
-    let home = std::env::var("HOME")?;
-    let base_dir = PathBuf::from(home).join(".config");
-    let path = base_dir.join("jkl").join("session_context.json");
+    let base_dir = crate::paths::config_dir().ok_or(ContextError::MissingConfigDir)?;
+    let path = base_dir.join("session_context.json");
     debug!("resolved context path={}", path.display());
     Ok(path)
 }

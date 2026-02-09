@@ -62,6 +62,22 @@ const completionSpec: Fig.Spec = {
   ],
   subcommands: [
     {
+      name: "ai",
+      description: "AI-focused utilities",
+      subcommands: [
+        {
+          name: "agents-md",
+          description: "Append basic JKL instructions to AGENTS.md files",
+          args: {
+            name: "path",
+            description: "Root directory to search (defaults to current)",
+            isOptional: true,
+            template: "folders",
+          },
+        },
+      ],
+    },
+    {
       name: "tui",
       description: "Open the interactive TUI",
       options: [

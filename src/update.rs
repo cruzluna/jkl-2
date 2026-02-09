@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use self_update::backends::github::ReleaseList;
 use self_update::update::Release;
 use std::path::PathBuf;

@@ -1,5 +1,7 @@
+mod agents;
 mod cli;
 mod context;
+mod paths;
 #[cfg(test)]
 mod test_utils;
 mod tmux;
@@ -16,10 +18,8 @@ fn main() -> Result<(), anyhow::Error> {
 fn init_logging() -> Result<std::path::PathBuf, anyhow::Error> {
     use flexi_logger::{Cleanup, Criterion, FileSpec, Logger, Naming};
 
-    let home_dir = std::env::var("HOME")?;
-    let log_directory = std::path::PathBuf::from(home_dir)
-        .join(".config")
-        .join("jkl");
+    let log_directory =
+        crate::paths::config_dir().ok_or_else(|| anyhow::anyhow!("missing config directory"))?;
 
     // Ensure log directory exists
     std::fs::create_dir_all(&log_directory)?;

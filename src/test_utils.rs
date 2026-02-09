@@ -49,6 +49,18 @@ impl EnvGuard {
         let home = self.temp_dir.join("home");
         fs::create_dir_all(&home).expect("create temp home");
         self.set_var("HOME", &home);
+        #[cfg(unix)]
+        {
+            let config_home = home.join(".config");
+            fs::create_dir_all(&config_home).expect("create temp config");
+            self.set_var("XDG_CONFIG_HOME", &config_home);
+        }
+        #[cfg(windows)]
+        {
+            let appdata = home.join("AppData").join("Roaming");
+            fs::create_dir_all(&appdata).expect("create temp appdata");
+            self.set_var("APPDATA", &appdata);
+        }
         home
     }
 
