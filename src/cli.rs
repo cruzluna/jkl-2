@@ -124,10 +124,12 @@ fn handle_tui(args: TuiArgs) -> Result<(), TuiError> {
 
 fn handle_upsert(args: UpsertArgs) -> Result<(), ContextError> {
     let status: Option<AgentStatus> = match args.status {
-        Some(s) => Some(
-            s.parse::<AgentStatus>()
-                .map_err(|e| ContextError::InvalidStatus(e.to_string()))?,
-        ),
+        Some(s) => Some(s.parse::<AgentStatus>().map_err(|_| {
+            ContextError::InvalidStatus(format!(
+                "{s}. Valid options: {}",
+                valid_statuses().join(", ")
+            ))
+        })?),
         None => None,
     };
     let session_name = join_tokens(args.session_name);
@@ -186,6 +188,10 @@ fn join_tokens(tokens: Vec<String>) -> String {
     tokens.join(" ")
 }
 
+fn valid_statuses() -> Vec<&'static str> {
+    vec!["working", "waiting", "done", "none"]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,7 +223,12 @@ mod tests {
 
         let err = handle_upsert(args).expect_err("expected invalid status");
         match err {
-            ContextError::InvalidStatus(_) => {}
+            ContextError::InvalidStatus(message) => {
+                assert_eq!(
+                    message,
+                    "not-a-status. Valid options: working, waiting, done, none"
+                );
+            }
             other => panic!("unexpected error: {other:?}"),
         }
     }
