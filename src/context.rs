@@ -107,13 +107,13 @@ where
         return None;
     }
 
-    if waiting > working + done {
-        return Some(AgentStatus::Waiting);
-    }
-    if working + waiting > done {
+    if working > 0 {
         return Some(AgentStatus::Working);
     }
-    if done > working + waiting {
+    if waiting > 0 {
+        return Some(AgentStatus::Waiting);
+    }
+    if done > 0 {
         return Some(AgentStatus::Done);
     }
 
@@ -448,6 +448,32 @@ mod tests {
         assert_eq!(first, second);
         assert_ne!(first, session_key("beta"));
         assert_eq!(first.len(), 64);
+    }
+
+    #[test]
+    fn effective_session_status_prioritizes_non_done_pane_states() {
+        let status = effective_session_status(
+            None,
+            vec![Some(AgentStatus::Done), Some(AgentStatus::Waiting)],
+        );
+        assert_eq!(status, Some(AgentStatus::Waiting));
+
+        let status = effective_session_status(
+            None,
+            vec![
+                Some(AgentStatus::Done),
+                Some(AgentStatus::Waiting),
+                Some(AgentStatus::Working),
+            ],
+        );
+        assert_eq!(status, Some(AgentStatus::Working));
+    }
+
+    #[test]
+    fn effective_session_status_is_done_only_when_all_known_panes_are_done() {
+        let status =
+            effective_session_status(None, vec![Some(AgentStatus::Done), Some(AgentStatus::Done)]);
+        assert_eq!(status, Some(AgentStatus::Done));
     }
 
     #[test]
