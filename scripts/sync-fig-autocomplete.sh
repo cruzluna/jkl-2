@@ -62,10 +62,14 @@ EOF
     exit 1
   fi
 
-  parent_dir="$(dirname "$FIG_REPO_DIR")"
-  mkdir -p "$parent_dir"
+  init_dir="$(dirname "$FIG_REPO_DIR")"
+  if [[ "$FIG_REPO_DIR" == "$HOME/.fig/autocomplete" ]]; then
+    init_dir="$HOME"
+  fi
+
+  mkdir -p "$init_dir"
   (
-    cd "$parent_dir"
+    cd "$init_dir"
     npx @withfig/autocomplete-tools@latest init
   )
 
