@@ -560,7 +560,7 @@ impl App {
             RowItem::Session(row) => self
                 .session_index_by_id
                 .get(&row.id)
-                .map(|index| format!("{index}: {}", row.name))
+                .map(|index| format!("{}: {}", session_shortcut_label(*index), row.name))
                 .unwrap_or_else(|| row.name.clone()),
             RowItem::Pane(row) => format!("  └─ {}", pane_label(row)),
         }
@@ -937,6 +937,20 @@ fn meta_jump_index(c: char) -> Option<usize> {
     if offset < 26 { Some(10 + offset) } else { None }
 }
 
+fn session_shortcut_label(index: usize) -> String {
+    if index < 10 {
+        return index.to_string();
+    }
+
+    let letter_offset = index - 10;
+    if letter_offset < 26 {
+        let letter = (b'a' + letter_offset as u8) as char;
+        return format!("M-{letter}");
+    }
+
+    index.to_string()
+}
+
 fn normalize_field(value: Option<&String>) -> String {
     value
         .map(|value| value.trim())
@@ -1137,6 +1151,17 @@ mod tests {
         let app = App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
         assert_eq!(app.row_label(&app.rows[0]), "0: alpha");
         assert_eq!(app.row_label(&app.rows[1]), "1: beta");
+    }
+
+    #[test]
+    fn row_label_uses_meta_shortcuts_after_nine() {
+        let sessions = (0..12)
+            .map(|index| session_row(&format!("@{index}"), &format!("session-{index}")))
+            .collect();
+        let app = App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+
+        assert_eq!(app.row_label(&app.rows[10]), "M-a: session-10");
+        assert_eq!(app.row_label(&app.rows[11]), "M-b: session-11");
     }
 
     #[test]
