@@ -45,6 +45,10 @@ struct UpsertArgs {
     #[arg(long)]
     pane_id: Option<String>,
     #[arg(long)]
+    window_id: Option<String>,
+    #[arg(long)]
+    window_name: Option<String>,
+    #[arg(long)]
     pane_name: Option<String>,
     #[arg(long)]
     status: Option<String>,
@@ -146,6 +150,8 @@ fn handle_upsert(args: UpsertArgs) -> Result<(), ContextError> {
         return crate::context::upsert_pane(
             &session_name,
             &pane_id,
+            args.window_id,
+            args.window_name,
             args.pane_name,
             status,
             context,
@@ -217,6 +223,8 @@ mod tests {
             session_id: None,
             pane_id: None,
             pane_name: None,
+            window_id: None,
+            window_name: None,
             status: Some("not-a-status".to_string()),
             context: None,
         };
@@ -243,6 +251,8 @@ mod tests {
             session_id: Some("sid".to_string()),
             pane_id: None,
             pane_name: None,
+            window_id: None,
+            window_name: None,
             status: Some("Working".to_string()),
             context: Some(vec!["hello".to_string(), "world".to_string()]),
         };
@@ -268,7 +278,9 @@ mod tests {
             session_name: vec!["Alpha".to_string()],
             session_id: None,
             pane_id: Some("%1".to_string()),
+            window_id: Some("@1".to_string()),
             pane_name: Some("planner".to_string()),
+            window_name: Some("editor".to_string()),
             status: Some("waiting".to_string()),
             context: Some(vec!["pane".to_string(), "ctx".to_string()]),
         };
@@ -278,6 +290,8 @@ mod tests {
         let contexts = load_contexts().expect("load contexts");
         let session = contexts.get(&session_key("Alpha")).expect("session entry");
         let pane = session.panes.get("%1").expect("pane entry");
+        assert_eq!(pane.window_id.as_deref(), Some("@1"));
+        assert_eq!(pane.window_name.as_deref(), Some("editor"));
         assert_eq!(pane.pane_name.as_deref(), Some("planner"));
         assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
         assert_eq!(pane.pane_context.as_deref(), Some("pane ctx"));
@@ -352,13 +366,15 @@ esac
             Some("ctx".to_string()),
         )
         .expect("seed renamed session");
-        crate::context::upsert_pane("old-name", "%1", None, None, None).expect("pane keep");
-        crate::context::upsert_pane("old-name", "%9", None, None, None).expect("pane stale");
+        crate::context::upsert_pane("old-name", "%1", None, None, None, None, None)
+            .expect("pane keep");
+        crate::context::upsert_pane("old-name", "%9", None, None, None, None, None)
+            .expect("pane stale");
         crate::context::upsert_session("gone".to_string(), Some("@9".to_string()), None, None)
             .expect("seed stale session");
 
         env.set_var("TMUX_LIST_SESSIONS", "@1\tnew-name\n");
-        env.set_var("TMUX_LIST_PANES", "new-name\t%1\n");
+        env.set_var("TMUX_LIST_PANES", "new-name\t@10\teditor\t%1\n");
 
         handle_sync().expect("sync");
 
@@ -371,6 +387,13 @@ esac
         assert_eq!(renamed.session_name.as_deref(), Some("new-name"));
         assert_eq!(renamed.session_id.as_deref(), Some("@1"));
         assert!(renamed.panes.contains_key("%1"));
+        assert_eq!(
+            renamed
+                .panes
+                .get("%1")
+                .and_then(|pane| pane.window_id.as_deref()),
+            Some("@10")
+        );
         assert!(!renamed.panes.contains_key("%9"));
     }
 }

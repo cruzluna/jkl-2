@@ -80,8 +80,24 @@ struct SessionRow {
     status: Option<crate::context::AgentStatus>,
     /// The context of the session
     context: String,
-    /// The panes belonging to the session
+    /// The windows belonging to the session
+    windows: Vec<WindowRow>,
+}
+
+#[derive(Clone)]
+struct WindowRow {
+    /// The tmux window ID
+    id: String,
+    /// The tmux window name
+    name: String,
+    /// The status of the window
+    status: Option<crate::context::AgentStatus>,
+    /// The context of the window
+    context: String,
+    /// The panes belonging to the window
     panes: Vec<PaneRow>,
+    /// The session ID
+    session_id: String,
 }
 
 #[derive(Clone)]
@@ -101,19 +117,31 @@ struct PaneRow {
 #[derive(Clone)]
 enum RowItem {
     Session(SessionRow),
+    Window(WindowRow),
     Pane(PaneRow),
 }
 
 #[derive(Clone, PartialEq, Eq)]
 enum RowKey {
     Session(String),
-    Pane { session_id: String, pane_id: String },
+    Window {
+        session_id: String,
+        window_id: String,
+    },
+    Pane {
+        session_id: String,
+        pane_id: String,
+    },
 }
 
 impl RowItem {
     fn key(&self) -> RowKey {
         match self {
             RowItem::Session(row) => RowKey::Session(row.id.clone()),
+            RowItem::Window(row) => RowKey::Window {
+                session_id: row.session_id.clone(),
+                window_id: row.id.clone(),
+            },
             RowItem::Pane(row) => RowKey::Pane {
                 session_id: row.session_id.clone(),
                 pane_id: row.id.clone(),
@@ -138,7 +166,6 @@ struct SearchQuery {
 struct ColumnWidths {
     session: u16,
     status: u16,
-    context: u16,
 }
 
 type FilterFn = Box<dyn Fn(&str, &[String]) -> Result<String, TuiError>>;
@@ -172,7 +199,6 @@ impl App {
             widths: ColumnWidths {
                 session: 0,
                 status: 0,
-                context: 0,
             },
             search: SearchQuery {
                 query: String::new(),
@@ -367,8 +393,11 @@ impl App {
         for session in &self.filtered_sessions {
             rows.push(RowItem::Session(session.clone()));
             if self.expanded_sessions.contains(&session.id) {
-                for pane in &session.panes {
-                    rows.push(RowItem::Pane(pane.clone()));
+                for window in &session.windows {
+                    rows.push(RowItem::Window(window.clone()));
+                    for pane in &window.panes {
+                        rows.push(RowItem::Pane(pane.clone()));
+                    }
                 }
             }
         }
@@ -395,6 +424,7 @@ impl App {
         if let Some(row) = self.selected_row() {
             let target_session_id = match row {
                 RowItem::Session(session) => session.id.as_str(),
+                RowItem::Window(window) => window.session_id.as_str(),
                 RowItem::Pane(pane) => pane.session_id.as_str(),
             };
             info!("tui switching to session_id={}", target_session_id);
@@ -408,6 +438,7 @@ impl App {
         let previous = self.selected_key();
         let session_id = self.selected_row().map(|row| match row {
             RowItem::Session(session) => session.id.clone(),
+            RowItem::Window(window) => window.session_id.clone(),
             RowItem::Pane(pane) => pane.session_id.clone(),
         });
         if let Some(session_id) = session_id {
@@ -421,6 +452,7 @@ impl App {
         let previous = self.selected_key();
         let session_id = self.selected_row().map(|row| match row {
             RowItem::Session(session) => session.id.clone(),
+            RowItem::Window(window) => window.session_id.clone(),
             RowItem::Pane(pane) => pane.session_id.clone(),
         });
         if let Some(session_id) = session_id {
@@ -562,7 +594,8 @@ impl App {
                 .get(&row.id)
                 .map(|index| format!("{}: {}", session_shortcut_label(*index), row.name))
                 .unwrap_or_else(|| row.name.clone()),
-            RowItem::Pane(row) => format!("  └─ {}", pane_label(row)),
+            RowItem::Window(row) => format!("  ◦ {}", row.name),
+            RowItem::Pane(row) => format!("    └─ {}", pane_label(row)),
         }
     }
 
@@ -581,19 +614,10 @@ impl App {
             .max()
             .unwrap_or(0)
             .max(UnicodeWidthStr::width("Status"));
-        let context = self
-            .rows
-            .iter()
-            .map(|item| UnicodeWidthStr::width(row_context(item).as_str()))
-            .max()
-            .unwrap_or(0)
-            .max(UnicodeWidthStr::width("Context"));
-
         #[allow(clippy::cast_possible_truncation)]
         ColumnWidths {
             session: session as u16,
             status: status as u16,
-            context: context as u16,
         }
     }
 
@@ -623,7 +647,7 @@ impl App {
         };
         if let Some(row_index) = self.rows.iter().position(|row| match row {
             RowItem::Session(row) => row.id == session.id,
-            RowItem::Pane(_) => false,
+            RowItem::Window(_) | RowItem::Pane(_) => false,
         }) {
             self.state.select(Some(row_index));
         }
@@ -692,6 +716,8 @@ impl PaneSelector {
                             crate::context::upsert_pane(
                                 session_name,
                                 &self.pane_id,
+                                None,
+                                None,
                                 None,
                                 status,
                                 None,
@@ -824,11 +850,15 @@ fn build_sessions(
         contexts.keys().collect::<Vec<_>>()
     );
 
-    let mut panes_by_session: HashMap<String, Vec<String>> = HashMap::new();
+    let mut panes_by_session_window: HashMap<String, HashMap<String, (String, Vec<String>)>> =
+        HashMap::new();
     for pane in panes {
-        panes_by_session
+        panes_by_session_window
             .entry(pane.session_name)
             .or_default()
+            .entry(pane.window_id)
+            .or_insert_with(|| (pane.window_name, Vec::new()))
+            .1
             .push(pane.pane_id);
     }
 
@@ -836,57 +866,83 @@ fn build_sessions(
         .into_iter()
         .map(|session| {
             let key = crate::context::session_key(&session.name);
-            debug!("building session: {:?} computed_key={}", session, key);
-
             let context = contexts.get(&key);
-            if let Some(ctx) = context {
-                debug!("  ✓ context found: {:?}", ctx);
-            } else {
-                debug!("  ✗ no context found for session={}", session.name);
-            }
 
             let context_value =
                 normalize_field(context.and_then(|ctx| ctx.session_context.as_ref()));
             let override_status = context.and_then(|ctx| ctx.session_status.clone());
 
-            let mut pane_rows = panes_by_session
-                .get(&session.name)
-                .cloned()
-                .unwrap_or_default();
-            pane_rows.sort();
-            let panes: Vec<PaneRow> = pane_rows
+            let mut window_rows = panes_by_session_window
+                .remove(&session.name)
+                .unwrap_or_default()
                 .into_iter()
-                .map(|pane_id| {
-                    let pane_ctx = context.and_then(|ctx| ctx.panes.get(&pane_id));
-                    let pane_alias = pane_ctx.and_then(|pane| {
-                        pane.pane_name
-                            .as_ref()
-                            .map(|name| name.trim())
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_string)
-                    });
-                    let pane_status = pane_ctx.and_then(|pane| pane.pane_status.clone());
-                    let pane_context_value =
-                        normalize_field(pane_ctx.and_then(|pane| pane.pane_context.as_ref()));
-                    PaneRow {
-                        id: pane_id,
-                        alias: pane_alias,
-                        status: pane_status,
-                        context: pane_context_value,
+                .collect::<Vec<_>>();
+            window_rows.sort_by(|(left_id, _), (right_id, _)| left_id.cmp(right_id));
+
+            let windows: Vec<WindowRow> = window_rows
+                .into_iter()
+                .map(|(window_id, (window_live_name, mut pane_rows))| {
+                    pane_rows.sort();
+                    let window_ctx = context.and_then(|ctx| ctx.windows.get(&window_id));
+                    let window_name = window_ctx
+                        .and_then(|window| window.window_name.as_ref())
+                        .map(|name| name.to_string())
+                        .unwrap_or(window_live_name);
+                    let window_context = normalize_field(
+                        window_ctx.and_then(|window| window.window_context.as_ref()),
+                    );
+                    let window_status = window_ctx.and_then(|window| window.window_status.clone());
+
+                    let panes: Vec<PaneRow> = pane_rows
+                        .into_iter()
+                        .map(|pane_id| {
+                            let pane_ctx = context.and_then(|ctx| ctx.panes.get(&pane_id));
+                            let pane_alias = pane_ctx.and_then(|pane| {
+                                pane.pane_name
+                                    .as_ref()
+                                    .map(|name| name.trim())
+                                    .filter(|name| !name.is_empty())
+                                    .map(|name| name.to_string())
+                            });
+                            let pane_status = pane_ctx.and_then(|pane| pane.pane_status.clone());
+                            let pane_context_value = normalize_field(
+                                pane_ctx.and_then(|pane| pane.pane_context.as_ref()),
+                            );
+                            PaneRow {
+                                id: pane_id,
+                                alias: pane_alias,
+                                status: pane_status,
+                                context: pane_context_value,
+                                session_id: session.id.clone(),
+                            }
+                        })
+                        .collect();
+                    let status = crate::context::effective_session_status(
+                        window_status,
+                        panes.iter().map(|pane| pane.status.clone()),
+                    );
+
+                    WindowRow {
+                        id: window_id,
+                        name: window_name,
+                        status,
+                        context: window_context,
+                        panes,
                         session_id: session.id.clone(),
                     }
                 })
                 .collect();
+
             let status = crate::context::effective_session_status(
                 override_status,
-                panes.iter().map(|pane| pane.status.clone()),
+                windows.iter().map(|window| window.status.clone()),
             );
             SessionRow {
                 id: session.id,
                 name: session.name,
                 status,
                 context: context_value,
-                panes,
+                windows,
             }
         })
         .collect();
@@ -894,7 +950,7 @@ fn build_sessions(
         "built {} session rows from {} contexts and {} pane groups",
         built.len(),
         contexts.len(),
-        panes_by_session.len()
+        panes_by_session_window.len()
     );
     built
 }
@@ -912,6 +968,7 @@ fn collect_live_panes(panes: &[crate::tmux::TmuxPane]) -> HashMap<String, HashSe
 fn row_status(item: &RowItem) -> Option<&crate::context::AgentStatus> {
     match item {
         RowItem::Session(row) => row.status.as_ref(),
+        RowItem::Window(row) => row.status.as_ref(),
         RowItem::Pane(row) => row.status.as_ref(),
     }
 }
@@ -919,6 +976,7 @@ fn row_status(item: &RowItem) -> Option<&crate::context::AgentStatus> {
 fn row_context(item: &RowItem) -> String {
     match item {
         RowItem::Session(row) => row.context.clone(),
+        RowItem::Window(row) => row.context.clone(),
         RowItem::Pane(row) => row.context.clone(),
     }
 }
@@ -955,7 +1013,7 @@ fn normalize_field(value: Option<&String>) -> String {
     value
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
+        .map(|name| name.to_string())
         .unwrap_or_else(|| DATA_NOT_RECEIVED.to_string())
 }
 
@@ -997,7 +1055,7 @@ fn status_style(status: Option<&crate::context::AgentStatus>) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{AgentStatus, PaneContext, SessionContext, session_key};
+    use crate::context::{AgentStatus, PaneContext, SessionContext, WindowContext, session_key};
     use crate::tmux::{TmuxPane, TmuxSession};
     use std::collections::HashMap;
 
@@ -1007,7 +1065,7 @@ mod tests {
             name: name.to_string(),
             status: None,
             context: "ctx".to_string(),
-            panes: Vec::new(),
+            windows: Vec::new(),
         }
     }
 
@@ -1040,14 +1098,20 @@ mod tests {
         let panes = vec![
             TmuxPane {
                 session_name: "alpha".to_string(),
+                window_id: "@10".to_string(),
+                window_name: "editor".to_string(),
                 pane_id: "%1".to_string(),
             },
             TmuxPane {
                 session_name: "alpha".to_string(),
+                window_id: "@10".to_string(),
+                window_name: "editor".to_string(),
                 pane_id: "%2".to_string(),
             },
             TmuxPane {
                 session_name: "beta".to_string(),
+                window_id: "@20".to_string(),
+                window_name: "server".to_string(),
                 pane_id: "%3".to_string(),
             },
         ];
@@ -1075,6 +1139,8 @@ mod tests {
             "%2".to_string(),
             PaneContext {
                 pane_id: None,
+                window_id: Some("@10".to_string()),
+                window_name: Some("editor".to_string()),
                 pane_name: Some("pane-two".to_string()),
                 pane_status: Some(AgentStatus::Done),
                 pane_context: Some("pctx".to_string()),
@@ -1089,6 +1155,15 @@ mod tests {
                 session_id: None,
                 session_status: Some(AgentStatus::Working),
                 session_context: Some("ctx".to_string()),
+                windows: HashMap::from([(
+                    "@10".to_string(),
+                    WindowContext {
+                        window_id: Some("@10".to_string()),
+                        window_name: Some("editor".to_string()),
+                        window_status: None,
+                        window_context: None,
+                    },
+                )]),
                 panes: pane_map,
             },
         );
@@ -1096,10 +1171,14 @@ mod tests {
         let panes = vec![
             TmuxPane {
                 session_name: "alpha".to_string(),
+                window_id: "@10".to_string(),
+                window_name: "editor".to_string(),
                 pane_id: "%2".to_string(),
             },
             TmuxPane {
                 session_name: "alpha".to_string(),
+                window_id: "@10".to_string(),
+                window_name: "editor".to_string(),
                 pane_id: "%1".to_string(),
             },
         ];
@@ -1111,13 +1190,15 @@ mod tests {
             .expect("alpha row");
         assert_eq!(alpha.status, Some(AgentStatus::Working));
         assert_eq!(alpha.context, "ctx");
-        assert_eq!(alpha.panes.len(), 2);
-        assert_eq!(alpha.panes[0].id, "%1");
-        assert_eq!(alpha.panes[0].context, DATA_NOT_RECEIVED);
-        assert_eq!(alpha.panes[1].id, "%2");
-        assert_eq!(alpha.panes[1].alias.as_deref(), Some("pane-two"));
-        assert_eq!(alpha.panes[1].status, Some(AgentStatus::Done));
-        assert_eq!(alpha.panes[1].context, "pctx");
+        assert_eq!(alpha.windows.len(), 1);
+        assert_eq!(alpha.windows[0].name, "editor");
+        assert_eq!(alpha.windows[0].panes.len(), 2);
+        assert_eq!(alpha.windows[0].panes[0].id, "%1");
+        assert_eq!(alpha.windows[0].panes[0].context, DATA_NOT_RECEIVED);
+        assert_eq!(alpha.windows[0].panes[1].id, "%2");
+        assert_eq!(alpha.windows[0].panes[1].alias.as_deref(), Some("pane-two"));
+        assert_eq!(alpha.windows[0].panes[1].status, Some(AgentStatus::Done));
+        assert_eq!(alpha.windows[0].panes[1].context, "pctx");
     }
 
     #[test]
@@ -1171,11 +1252,18 @@ mod tests {
             name: "alpha".to_string(),
             status: None,
             context: "ctx".to_string(),
-            panes: vec![PaneRow {
-                id: "%1".to_string(),
-                alias: Some("verylongalias".to_string()),
+            windows: vec![WindowRow {
+                id: "@10".to_string(),
+                name: "editor".to_string(),
                 status: None,
-                context: "p1".to_string(),
+                context: "wctx".to_string(),
+                panes: vec![PaneRow {
+                    id: "%1".to_string(),
+                    alias: Some("verylongalias".to_string()),
+                    status: None,
+                    context: "p1".to_string(),
+                    session_id: "@1".to_string(),
+                }],
                 session_id: "@1".to_string(),
             }],
         }];
@@ -1185,7 +1273,7 @@ mod tests {
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
 
-        assert_eq!(app.row_label(&app.rows[1]), "  └─ verylon...");
+        assert_eq!(app.row_label(&app.rows[2]), "    └─ verylon...");
     }
 
     #[test]
@@ -1196,22 +1284,29 @@ mod tests {
                 name: "alpha".to_string(),
                 status: None,
                 context: "ctx".to_string(),
-                panes: vec![
-                    PaneRow {
-                        id: "%1".to_string(),
-                        alias: None,
-                        status: None,
-                        context: "p1".to_string(),
-                        session_id: "@1".to_string(),
-                    },
-                    PaneRow {
-                        id: "%2".to_string(),
-                        alias: None,
-                        status: None,
-                        context: "p2".to_string(),
-                        session_id: "@1".to_string(),
-                    },
-                ],
+                windows: vec![WindowRow {
+                    id: "@10".to_string(),
+                    name: "editor".to_string(),
+                    status: None,
+                    context: "wctx".to_string(),
+                    panes: vec![
+                        PaneRow {
+                            id: "%1".to_string(),
+                            alias: None,
+                            status: None,
+                            context: "p1".to_string(),
+                            session_id: "@1".to_string(),
+                        },
+                        PaneRow {
+                            id: "%2".to_string(),
+                            alias: None,
+                            status: None,
+                            context: "p2".to_string(),
+                            session_id: "@1".to_string(),
+                        },
+                    ],
+                    session_id: "@1".to_string(),
+                }],
             },
             session_row("@2", "beta"),
         ];
@@ -1225,7 +1320,7 @@ mod tests {
         let selected = app.selected_row().expect("selected row");
         match selected {
             RowItem::Session(row) => assert_eq!(row.id, "@2"),
-            RowItem::Pane(_) => panic!("expected session row"),
+            RowItem::Window(_) | RowItem::Pane(_) => panic!("expected session row"),
         }
     }
 }
