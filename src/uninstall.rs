@@ -17,9 +17,9 @@ struct UninstallSummary {
 pub fn run(purge_data: bool) -> Result<()> {
     let exe_path = std::env::current_exe().context("resolve current executable path")?;
     let home_dir = if purge_data {
-        Some(
-            PathBuf::from(std::env::var("HOME").context("read HOME for config cleanup")?),
-        )
+        Some(PathBuf::from(
+            std::env::var("HOME").context("read HOME for config cleanup")?,
+        ))
     } else {
         None
     };

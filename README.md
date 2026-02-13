@@ -99,12 +99,12 @@ Each archive should contain the `jkl` binary at the top level.
 - Launch the TUI: `jkl tui`
 - Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search first)
 - Navigate rows: `↑`/`↓` or `j`/`k`
-- Expand/collapse panes: `l`/`h`
+- Expand/collapse session details (windows + panes): `l`/`h`
 - Refresh pane list: `r`
 - Search sessions: `/` (type to filter, `Esc` to exit search)
 - Switch to session: `Enter`
 - Upsert session metadata: `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
-- Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]`
+- Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--window-id <window_id> [--window-name <window_name>]] [--status <status>] [--context <text...>]`
 - Rename session entry: `jkl rename <session_id> <session_name...>`
 - Sync persisted metadata with live tmux state: `jkl sync`
 - Uninstall binary from current location: `jkl uninstall [--purge-data]`
@@ -131,7 +131,7 @@ $ tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
 Default prefix bindings (only set when the key is currently unbound):
 
 - `f`: open `jkl tui` in a popup
-- `c`: prompt for context and run `jkl upsert '#S' --session-id '#{session_id}' --context <input>`
+- `W`: prompt for context and run `jkl upsert '#S' --session-id '#{session_id}' --context <input>`
 - `e`: open `~/.config/jkl/session_context.json` in `nvim`
 - `S`: open pane status selector popup
 
@@ -258,12 +258,20 @@ Shape (keyed by `blake3(session_name)`):
 {
   "2f0d7b3b5e3b9b1d4b4b5b8b8e2e2e9a2d2d4d5f2f0f5e5f2d9b3f1a5c8e": {
     "session_name": "work",
-    "status": "idle",
-    "context": "my project",
+    "session_status": "waiting",
+    "session_context": "my project",
+    "windows": {
+      "@10": {
+        "window_id": "@10",
+        "window_name": "editor"
+      }
+    },
     "panes": {
       "%1": {
-        "status": "working",
-        "context": "focus time"
+        "window_id": "@10",
+        "window_name": "editor",
+        "pane_status": "working",
+        "pane_context": "focus time"
       }
     }
   }
@@ -283,7 +291,7 @@ Cleanup/repair example:
 jkl sync
 ```
 
-`jkl sync` keeps only sessions/panes that still exist in tmux. Session matching is ID-first; if no ID match is found it falls back to session name. When a session is matched by ID but the name changed, jkl updates `session_name` and re-keys the JSON entry to `blake3(new_session_name)`.
+`jkl sync` keeps only sessions/windows/panes that still exist in tmux. Session matching is ID-first; if no ID match is found it falls back to session name. When a session is matched by ID but the name changed, jkl updates `session_name` and re-keys the JSON entry to `blake3(new_session_name)`.
 
 Status values:
 
@@ -318,14 +326,18 @@ Arguments:
 Options:
       --session-id <SESSION_ID>
       --pane-id <PANE_ID>
+      --window-id <WINDOW_ID>
+      --window-name <WINDOW_NAME>
       --status <STATUS>
       --context <CONTEXT>...
 ```
 
+`--window-name` requires `--window-id`.
+
 Examples:
 
 - `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]` upserts session metadata.
-- `jkl upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]` upserts pane metadata.
+- `jkl upsert <session_name...> --pane-id <pane_id> [--window-id <window_id> [--window-name <window_name>]] [--status <status>] [--context <text...>]` upserts pane metadata.
 - `jkl sync` removes stale session/pane metadata and migrates renamed sessions using tmux `session_id`.
 
 Sample commands:
