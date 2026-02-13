@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use self_update::backends::github::ReleaseList;
 use self_update::update::Release;
 use std::path::PathBuf;
@@ -7,20 +7,51 @@ const REPO_OWNER: &str = "cruzluna";
 const REPO_NAME: &str = "jkl-2";
 const BIN_NAME: &str = "jkl";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateChannel {
+    Stable,
+    PreRelease,
+    DevPreview,
+}
+
+impl UpdateChannel {
+    fn tag_fragment(self) -> Option<&'static str> {
+        match self {
+            Self::Stable => None,
+            Self::PreRelease => Some("-rc."),
+            Self::DevPreview => Some("-dev."),
+        }
+    }
+
+    fn not_found_error(self) -> &'static str {
+        match self {
+            Self::Stable => "stable channel does not use tag filtering",
+            Self::PreRelease => "no rc prerelease tags found",
+            Self::DevPreview => "no dev preview tags found",
+        }
+    }
+
+    fn context_label(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::PreRelease => "rc prerelease",
+            Self::DevPreview => "dev preview",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UpdateConfig {
     repo_owner: &'static str,
     repo_name: &'static str,
     bin_name: &'static str,
-    prerelease: bool,
 }
 
-fn update_config(prerelease: bool) -> UpdateConfig {
+fn update_config() -> UpdateConfig {
     UpdateConfig {
         repo_owner: REPO_OWNER,
         repo_name: REPO_NAME,
         bin_name: BIN_NAME,
-        prerelease,
     }
 }
 
@@ -56,14 +87,23 @@ fn archive_name(target: &str) -> String {
     format!("{BIN_NAME}-{target}.tar.gz")
 }
 
-fn select_prerelease_tag(releases: &[Release]) -> Option<String> {
+fn select_channel_tag(releases: &[Release], channel: UpdateChannel) -> Option<String> {
+    let fragment = channel.tag_fragment()?;
     releases
         .iter()
-        .find(|release| release.version.contains("-rc."))
+        .find(|release| release.version.contains(fragment))
         .map(|release| format!("v{}", release.version))
 }
 
-fn find_prerelease_tag(config: &UpdateConfig, target: Option<&str>) -> Result<String> {
+fn find_channel_tag(
+    config: &UpdateConfig,
+    target: Option<&str>,
+    channel: UpdateChannel,
+) -> Result<String> {
+    if channel == UpdateChannel::Stable {
+        bail!("{}", channel.not_found_error());
+    }
+
     let mut builder = ReleaseList::configure();
     builder
         .repo_owner(config.repo_owner)
@@ -72,7 +112,7 @@ fn find_prerelease_tag(config: &UpdateConfig, target: Option<&str>) -> Result<St
         builder.with_target(target);
     }
     let releases = builder.build()?.fetch()?;
-    select_prerelease_tag(&releases).ok_or_else(|| anyhow::anyhow!("no rc prerelease tags found"))
+    select_channel_tag(&releases, channel).ok_or_else(|| anyhow::anyhow!(channel.not_found_error()))
 }
 
 fn command_in_path(command: &str) -> bool {
@@ -85,8 +125,8 @@ fn command_in_path(command: &str) -> bool {
     })
 }
 
-pub fn run(prerelease: bool) -> Result<()> {
-    let config = update_config(prerelease);
+pub fn run(channel: UpdateChannel) -> Result<()> {
+    let config = update_config();
     let current_version = self_update::cargo_crate_version!();
     let target = detect_target().ok();
     let mut builder = self_update::backends::github::Update::configure();
@@ -105,9 +145,9 @@ pub fn run(prerelease: bool) -> Result<()> {
         );
     }
 
-    if config.prerelease {
-        let tag =
-            find_prerelease_tag(&config, target.as_deref()).context("find rc prerelease tag")?;
+    if channel != UpdateChannel::Stable {
+        let tag = find_channel_tag(&config, target.as_deref(), channel)
+            .with_context(|| format!("find {} tag", channel.context_label()))?;
         builder.target_version_tag(&tag);
     }
 
@@ -150,17 +190,10 @@ mod tests {
 
     #[test]
     fn update_config_sets_repo_fields() {
-        let config = update_config(false);
+        let config = update_config();
         assert_eq!(config.repo_owner, REPO_OWNER);
         assert_eq!(config.repo_name, REPO_NAME);
         assert_eq!(config.bin_name, BIN_NAME);
-        assert!(!config.prerelease);
-    }
-
-    #[test]
-    fn update_config_sets_prerelease_flag() {
-        let config = update_config(true);
-        assert!(config.prerelease);
     }
 
     #[test]
@@ -194,16 +227,30 @@ mod tests {
     }
 
     #[test]
-    fn select_prerelease_tag_picks_rc_release() {
+    fn select_channel_tag_picks_rc_release() {
         let releases = vec![release("0.1.0"), release("0.2.0-rc.1")];
-        let tag = select_prerelease_tag(&releases);
+        let tag = select_channel_tag(&releases, UpdateChannel::PreRelease);
         assert_eq!(tag.as_deref(), Some("v0.2.0-rc.1"));
     }
 
     #[test]
-    fn select_prerelease_tag_returns_none_when_missing() {
+    fn select_channel_tag_picks_dev_release() {
+        let releases = vec![release("0.1.0-rc.1"), release("0.2.0-dev.12.abcd123")];
+        let tag = select_channel_tag(&releases, UpdateChannel::DevPreview);
+        assert_eq!(tag.as_deref(), Some("v0.2.0-dev.12.abcd123"));
+    }
+
+    #[test]
+    fn select_channel_tag_returns_none_when_missing() {
         let releases = vec![release("0.1.0"), release("0.2.0")];
-        let tag = select_prerelease_tag(&releases);
+        let tag = select_channel_tag(&releases, UpdateChannel::PreRelease);
+        assert!(tag.is_none());
+    }
+
+    #[test]
+    fn select_channel_tag_returns_none_for_stable() {
+        let releases = vec![release("0.1.0"), release("0.2.0-rc.1")];
+        let tag = select_channel_tag(&releases, UpdateChannel::Stable);
         assert!(tag.is_none());
     }
 }

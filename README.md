@@ -51,11 +51,21 @@ jkl-sync-fig-autocomplete
 To include pre-releases:
 
 ```
+jkl update pre-release
+# equivalent:
 jkl update --prerelease
 jkl-sync-fig-autocomplete
 ```
 
-Pre-releases are selected from tags that include `-rc.` (for example, `v0.2.0-rc.1`).
+To include dev preview builds from the `dev` branch:
+
+```
+jkl update pre-release --dev
+jkl-sync-fig-autocomplete
+```
+
+Master pre-releases are selected from tags that include `-rc.` (for example, `v0.2.0-rc.1`).
+Dev previews are selected from tags that include `-dev.` (for example, `v0.2.0-dev.42.abc1234`).
 
 If you installed via Cargo:
 
@@ -107,6 +117,9 @@ Each archive should contain the `jkl` binary at the top level.
 - Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]`
 - Rename session entry: `jkl rename <session_id> <session_name...>`
 - Sync persisted metadata with live tmux state: `jkl sync`
+- Update from stable channel: `jkl update`
+- Update from master pre-release channel: `jkl update pre-release`
+- Update from dev preview channel: `jkl update pre-release --dev`
 - Uninstall binary from current location: `jkl uninstall [--purge-data]`
 - Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
 

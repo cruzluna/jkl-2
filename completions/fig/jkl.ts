@@ -161,10 +161,22 @@ const completionSpec: Fig.Spec = {
     {
       name: "update",
       description: "Self-update jkl binary from GitHub releases",
+      subcommands: [
+        {
+          name: "pre-release",
+          description: "Update from the pre-release channel",
+          options: [
+            {
+              name: "--dev",
+              description: "Use dev preview builds from the dev branch",
+            },
+          ],
+        },
+      ],
       options: [
         {
           name: "--prerelease",
-          description: "Allow pre-release versions",
+          description: "Allow master pre-release versions (-rc tags)",
         },
       ],
     },

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand};
 use log::{debug, info};
 
@@ -61,9 +61,24 @@ struct RenameArgs {
 
 #[derive(Args)]
 struct UpdateArgs {
-    /// Include pre-release versions.
+    #[command(subcommand)]
+    command: Option<UpdateCommand>,
+    /// Include master pre-release versions (`-rc.` tags).
     #[arg(long)]
     prerelease: bool,
+}
+
+#[derive(Subcommand)]
+enum UpdateCommand {
+    /// Update from the pre-release channel.
+    PreRelease(UpdatePreReleaseArgs),
+}
+
+#[derive(Args)]
+struct UpdatePreReleaseArgs {
+    /// Use the dev preview channel.
+    #[arg(long)]
+    dev: bool,
 }
 
 #[derive(Args)]
@@ -177,7 +192,28 @@ fn handle_sync() -> Result<()> {
 }
 
 fn handle_update(args: UpdateArgs) -> Result<()> {
-    crate::update::run(args.prerelease)
+    crate::update::run(resolve_update_channel(args)?)
+}
+
+fn resolve_update_channel(args: UpdateArgs) -> Result<crate::update::UpdateChannel> {
+    let from_subcommand = match args.command {
+        Some(UpdateCommand::PreRelease(UpdatePreReleaseArgs { dev: true })) => {
+            Some(crate::update::UpdateChannel::DevPreview)
+        }
+        Some(UpdateCommand::PreRelease(UpdatePreReleaseArgs { dev: false })) => {
+            Some(crate::update::UpdateChannel::PreRelease)
+        }
+        None => None,
+    };
+
+    if args.prerelease {
+        if from_subcommand.is_some() {
+            bail!("cannot combine --prerelease with update subcommands");
+        }
+        return Ok(crate::update::UpdateChannel::PreRelease);
+    }
+
+    Ok(from_subcommand.unwrap_or(crate::update::UpdateChannel::Stable))
 }
 
 fn handle_uninstall(args: UninstallArgs) -> Result<()> {
@@ -257,6 +293,53 @@ mod tests {
         assert_eq!(entry.session_id.as_deref(), Some("sid"));
         assert_eq!(entry.session_status, Some(AgentStatus::Working));
         assert_eq!(entry.session_context.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn resolve_update_channel_defaults_to_stable() {
+        let channel = resolve_update_channel(UpdateArgs {
+            command: None,
+            prerelease: false,
+        })
+        .expect("resolve channel");
+        assert_eq!(channel, crate::update::UpdateChannel::Stable);
+    }
+
+    #[test]
+    fn resolve_update_channel_supports_legacy_prerelease_flag() {
+        let channel = resolve_update_channel(UpdateArgs {
+            command: None,
+            prerelease: true,
+        })
+        .expect("resolve channel");
+        assert_eq!(channel, crate::update::UpdateChannel::PreRelease);
+    }
+
+    #[test]
+    fn resolve_update_channel_supports_dev_prerelease_subcommand() {
+        let channel = resolve_update_channel(UpdateArgs {
+            command: Some(UpdateCommand::PreRelease(UpdatePreReleaseArgs {
+                dev: true,
+            })),
+            prerelease: false,
+        })
+        .expect("resolve channel");
+        assert_eq!(channel, crate::update::UpdateChannel::DevPreview);
+    }
+
+    #[test]
+    fn resolve_update_channel_rejects_mixed_legacy_flag_and_subcommand() {
+        let err = resolve_update_channel(UpdateArgs {
+            command: Some(UpdateCommand::PreRelease(UpdatePreReleaseArgs {
+                dev: false,
+            })),
+            prerelease: true,
+        })
+        .expect_err("expected mixed args to fail");
+        assert_eq!(
+            err.to_string(),
+            "cannot combine --prerelease with update subcommands"
+        );
     }
 
     #[test]
