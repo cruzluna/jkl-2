@@ -27,9 +27,21 @@ pub enum AgentStatus {
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct PaneContext {
     pub pane_id: Option<String>,
+    // Denormalized convenience fields for display/filtering on pane records.
+    // `window_id` is the canonical link; `window_name` is a cached label.
+    pub window_id: Option<String>,
+    pub window_name: Option<String>,
     pub pane_name: Option<String>,
     pub pane_status: Option<AgentStatus>,
     pub pane_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+pub struct WindowContext {
+    pub window_id: Option<String>,
+    pub window_name: Option<String>,
+    pub window_status: Option<AgentStatus>,
+    pub window_context: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -40,6 +52,8 @@ pub struct SessionContext {
     pub session_status: Option<AgentStatus>,
     pub session_context: Option<String>,
     #[serde(default)]
+    pub windows: WindowContextJson,
+    #[serde(default)]
     pub panes: PaneContextJson,
 }
 
@@ -47,6 +61,8 @@ pub type SessionKey = String;
 pub type PaneId = String;
 
 pub type ContextJson = HashMap<SessionKey, SessionContext>;
+pub type WindowId = String;
+pub type WindowContextJson = HashMap<WindowId, WindowContext>;
 pub type PaneContextJson = HashMap<PaneId, PaneContext>;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -69,6 +85,8 @@ pub enum ContextError {
     FailedToSave(String),
     #[error("Invalid status: {0}")]
     InvalidStatus(String),
+    #[error("Invalid arguments: {0}")]
+    InvalidArguments(String),
 }
 
 pub fn session_key(session_name: &str) -> String {
@@ -181,6 +199,8 @@ pub fn upsert_session(
 pub fn upsert_pane(
     session_name: &str,
     pane_id: &str,
+    window_id: Option<String>,
+    window_name: Option<String>,
     pane_name: Option<String>,
     pane_status: Option<AgentStatus>,
     pane_context: Option<String>,
@@ -196,6 +216,27 @@ pub fn upsert_pane(
     let entry = contexts.entry(session_key(session_name)).or_default();
     entry.session_name = Some(session_name.to_string());
     let pane = entry.panes.entry(pane_id.to_string()).or_default();
+    pane.pane_id = Some(pane_id.to_string());
+
+    if let Some(window_id) = window_id {
+        pane.window_id = Some(window_id.clone());
+        if let Some(window_name) = window_name.clone() {
+            pane.window_name = Some(window_name.clone());
+            let window = entry.windows.entry(window_id.clone()).or_default();
+            if window.window_id.is_none() {
+                window.window_id = Some(window_id);
+            }
+            window.window_name = Some(window_name);
+        } else {
+            entry
+                .windows
+                .entry(window_id.clone())
+                .or_insert_with(|| WindowContext {
+                    window_id: Some(window_id),
+                    ..WindowContext::default()
+                });
+        }
+    }
 
     if let Some(pane_name) = pane_name {
         pane.pane_name = Some(pane_name);
@@ -260,11 +301,31 @@ pub fn sync_with_tmux(
         .collect();
 
     let mut live_pane_ids: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut live_window_ids: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut live_window_names: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut pane_window_by_session: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut pane_window_name_by_session: HashMap<String, HashMap<String, String>> = HashMap::new();
     for pane in live_panes {
         live_pane_ids
             .entry(pane.session_name.clone())
             .or_default()
             .insert(pane.pane_id.clone());
+        live_window_ids
+            .entry(pane.session_name.clone())
+            .or_default()
+            .insert(pane.window_id.clone());
+        live_window_names
+            .entry(pane.session_name.clone())
+            .or_default()
+            .insert(pane.window_id.clone(), pane.window_name.clone());
+        pane_window_by_session
+            .entry(pane.session_name.clone())
+            .or_default()
+            .insert(pane.pane_id.clone(), pane.window_id.clone());
+        pane_window_name_by_session
+            .entry(pane.session_name.clone())
+            .or_default()
+            .insert(pane.pane_id.clone(), pane.window_name.clone());
     }
 
     let mut summary = SyncSummary::default();
@@ -299,14 +360,44 @@ pub fn sync_with_tmux(
         context.session_id = Some(live_session.id.clone());
 
         let before_panes = context.panes.len();
+        let before_windows = context.windows.len();
         if let Some(live_ids) = live_pane_ids.get(&live_session.name) {
             context
                 .panes
                 .retain(|pane_id, _| live_ids.contains(pane_id));
+            if let Some(pane_to_window) = pane_window_by_session.get(&live_session.name) {
+                for (pane_id, pane) in &mut context.panes {
+                    if let Some(window_id) = pane_to_window.get(pane_id) {
+                        pane.window_id = Some(window_id.clone());
+                    }
+                    if let Some(window_name) = pane_window_name_by_session
+                        .get(&live_session.name)
+                        .and_then(|map| map.get(pane_id))
+                    {
+                        pane.window_name = Some(window_name.clone());
+                    }
+                }
+            }
         } else {
             context.panes.clear();
         }
+
+        if let Some(live_windows) = live_window_ids.get(&live_session.name) {
+            context
+                .windows
+                .retain(|window_id, _| live_windows.contains(window_id));
+            if let Some(window_names) = live_window_names.get(&live_session.name) {
+                for (window_id, window_name) in window_names {
+                    let window = context.windows.entry(window_id.clone()).or_default();
+                    window.window_id = Some(window_id.clone());
+                    window.window_name = Some(window_name.clone());
+                }
+            }
+        } else {
+            context.windows.clear();
+        }
         summary.removed_panes += before_panes.saturating_sub(context.panes.len());
+        let _ = before_windows;
 
         let key = session_key(&live_session.name);
         let target = synced.entry(key).or_default();
@@ -335,6 +426,15 @@ pub fn prune_panes(live_panes: &HashMap<String, HashSet<String>>) -> Result<(), 
         context
             .panes
             .retain(|pane_id, _| live_ids.contains(pane_id));
+
+        let live_windows: HashSet<String> = context
+            .panes
+            .values()
+            .filter_map(|pane| pane.window_id.clone())
+            .collect();
+        context
+            .windows
+            .retain(|window_id, _| live_windows.contains(window_id));
     }
     let after_count: usize = contexts.values().map(|ctx| ctx.panes.len()).sum();
     if after_count < before_count {
@@ -377,9 +477,32 @@ fn merge_context(target: &mut SessionContext, source: SessionContext) {
     if target.session_context.is_none() {
         target.session_context = source.session_context;
     }
+    for (window_id, window) in source.windows {
+        let WindowContext {
+            window_id: source_window_id,
+            window_name: source_window_name,
+            window_status: source_window_status,
+            window_context: source_window_context,
+        } = window;
+        let entry = target.windows.entry(window_id).or_default();
+        if entry.window_id.is_none() {
+            entry.window_id = source_window_id;
+        }
+        if entry.window_name.is_none() {
+            entry.window_name = source_window_name;
+        }
+        if entry.window_status.is_none() {
+            entry.window_status = source_window_status;
+        }
+        if entry.window_context.is_none() {
+            entry.window_context = source_window_context;
+        }
+    }
     for (pane_id, pane) in source.panes {
         let PaneContext {
             pane_id: source_pane_id,
+            window_id: source_window_id,
+            window_name: source_window_name,
             pane_name: source_pane_name,
             pane_status: source_pane_status,
             pane_context: source_pane_context,
@@ -387,6 +510,12 @@ fn merge_context(target: &mut SessionContext, source: SessionContext) {
         let entry = target.panes.entry(pane_id).or_default();
         if entry.pane_id.is_none() {
             entry.pane_id = source_pane_id;
+        }
+        if entry.window_id.is_none() {
+            entry.window_id = source_window_id;
+        }
+        if entry.window_name.is_none() {
+            entry.window_name = source_window_name;
         }
         if entry.pane_name.is_none() {
             entry.pane_name = source_pane_name;
@@ -518,6 +647,8 @@ mod tests {
         upsert_pane(
             "Alpha",
             "%1",
+            None,
+            None,
             Some("pane".to_string()),
             Some(AgentStatus::Waiting),
             Some("ctx".to_string()),
@@ -530,6 +661,30 @@ mod tests {
         assert_eq!(pane.pane_name.as_deref(), Some("pane"));
         assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
         assert_eq!(pane.pane_context.as_deref(), Some("ctx"));
+    }
+
+    #[test]
+    fn upsert_pane_ignores_window_name_without_window_id() {
+        let mut env = EnvGuard::new("context-upsert-pane-window-name-only");
+        env.set_temp_home();
+
+        upsert_pane(
+            "Alpha",
+            "%1",
+            None,
+            Some("editor".to_string()),
+            None,
+            None,
+            None,
+        )
+        .expect("upsert pane");
+
+        let contexts = load_contexts().expect("load contexts");
+        let session = contexts.get(&session_key("Alpha")).expect("session entry");
+        let pane = session.panes.get("%1").expect("pane entry");
+        assert!(pane.window_name.is_none());
+        assert!(pane.window_id.is_none());
+        assert!(session.windows.is_empty());
     }
 
     #[test]
@@ -562,9 +717,9 @@ mod tests {
         let mut env = EnvGuard::new("context-prune");
         env.set_temp_home();
 
-        upsert_pane("Alpha", "%1", None, None, None).expect("pane 1");
-        upsert_pane("Alpha", "%2", None, None, None).expect("pane 2");
-        upsert_pane("Beta", "%3", None, None, None).expect("pane 3");
+        upsert_pane("Alpha", "%1", None, None, None, None, None).expect("pane 1");
+        upsert_pane("Alpha", "%2", None, None, None, None, None).expect("pane 2");
+        upsert_pane("Beta", "%3", None, None, None, None, None).expect("pane 3");
 
         let mut live = HashMap::new();
         live.insert("Alpha".to_string(), HashSet::from([String::from("%1")]));
@@ -592,12 +747,30 @@ mod tests {
             Some("ctx".to_string()),
         )
         .expect("seed renamed session");
-        upsert_pane("old-name", "%1", None, None, Some("keep".to_string())).expect("pane keep");
-        upsert_pane("old-name", "%9", None, None, Some("drop".to_string())).expect("pane drop");
+        upsert_pane(
+            "old-name",
+            "%1",
+            None,
+            None,
+            None,
+            None,
+            Some("keep".to_string()),
+        )
+        .expect("pane keep");
+        upsert_pane(
+            "old-name",
+            "%9",
+            None,
+            None,
+            None,
+            None,
+            Some("drop".to_string()),
+        )
+        .expect("pane drop");
 
         upsert_session("gone".to_string(), Some("@9".to_string()), None, None)
             .expect("seed stale session");
-        upsert_pane("gone", "%3", None, None, None).expect("stale pane");
+        upsert_pane("gone", "%3", None, None, None, None, None).expect("stale pane");
 
         let live_sessions = vec![TmuxSession {
             id: "@1".to_string(),
@@ -605,6 +778,8 @@ mod tests {
         }];
         let live_panes = vec![TmuxPane {
             session_name: "new-name".to_string(),
+            window_id: "@10".to_string(),
+            window_name: "editor".to_string(),
             pane_id: "%1".to_string(),
         }];
 
@@ -638,7 +813,7 @@ mod tests {
 
         upsert_session("alpha".to_string(), Some("@old".to_string()), None, None)
             .expect("seed session");
-        upsert_pane("alpha", "%1", None, None, None).expect("seed pane");
+        upsert_pane("alpha", "%1", None, None, None, None, None).expect("seed pane");
 
         let live_sessions = vec![TmuxSession {
             id: "@new".to_string(),
@@ -646,6 +821,8 @@ mod tests {
         }];
         let live_panes = vec![TmuxPane {
             session_name: "alpha".to_string(),
+            window_id: "@10".to_string(),
+            window_name: "editor".to_string(),
             pane_id: "%1".to_string(),
         }];
 
