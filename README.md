@@ -122,6 +122,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Update from dev preview channel: `jkl update pre-release --dev`
 - Uninstall binary from current location: `jkl uninstall [--purge-data]`
 - Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
+- Append basic JKL instructions to AGENTS.md files: `jkl ai agents-md [path]`
 
 Multi-word session names or context can be passed without quotes; use `--` to terminate positional values if needed.
 

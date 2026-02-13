@@ -39,3 +39,10 @@ Use this as the default playbook for coding agents in this repository.
 - Preserve existing CLI behavior and keybindings unless requested.
 - Update docs when commands or behavior change.
 
+## Basic JKL Instructions
+
+- Do not invoke the TUI command (`jkl tui`) from automated agents.
+- Upsert session metadata: `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
+- Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--status <status>] [--context <text...>]`
+- Rename a session entry: `jkl rename <session_id> <session_name...>`
+- Sync persisted metadata with live tmux state: `jkl sync`

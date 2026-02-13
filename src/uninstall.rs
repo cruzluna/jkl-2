@@ -16,15 +16,13 @@ struct UninstallSummary {
 
 pub fn run(purge_data: bool) -> Result<()> {
     let exe_path = std::env::current_exe().context("resolve current executable path")?;
-    let home_dir = if purge_data {
-        Some(
-            PathBuf::from(std::env::var("HOME").context("read HOME for config cleanup")?),
-        )
+    let config_dir = if purge_data {
+        Some(crate::paths::config_dir().context("resolve config directory for cleanup")?)
     } else {
         None
     };
 
-    let summary = uninstall_paths(&exe_path, home_dir.as_deref(), purge_data)?;
+    let summary = uninstall_paths(&exe_path, config_dir.as_deref(), purge_data)?;
 
     if summary.removed_binary {
         println!("Removed {}", summary.binary_path.display());
@@ -55,7 +53,7 @@ pub fn run(purge_data: bool) -> Result<()> {
 
 fn uninstall_paths(
     exe_path: &Path,
-    home_dir: Option<&Path>,
+    config_dir: Option<&Path>,
     purge_data: bool,
 ) -> Result<UninstallSummary> {
     let binary_path = exe_path.to_path_buf();
@@ -70,11 +68,10 @@ fn uninstall_paths(
         .with_context(|| format!("remove helper at {}", helper_path.display()))?;
 
     let (removed_config, config_path) = if purge_data {
-        let home = home_dir.context("missing home directory for config cleanup")?;
-        let path = home.join(".config").join("jkl");
+        let path = config_dir.context("missing config directory for cleanup")?;
         let removed = remove_dir_if_exists(&path)
             .with_context(|| format!("remove config directory at {}", path.display()))?;
-        (Some(removed), Some(path))
+        (Some(removed), Some(path.to_path_buf()))
     } else {
         (None, None)
     };
@@ -140,14 +137,13 @@ mod tests {
     fn uninstall_paths_purges_config_when_requested() {
         let env = EnvGuard::new("uninstall-purge-config");
         let exe = env.temp_dir().join("jkl");
-        let home = env.temp_dir().join("home");
-        let config_dir = home.join(".config").join("jkl");
+        let config_dir = env.temp_dir().join("config").join("jkl");
 
         fs::create_dir_all(&config_dir).expect("create config dir");
         fs::write(config_dir.join("session_context.json"), "{}").expect("write config");
         fs::write(&exe, "bin").expect("write exe");
 
-        let summary = uninstall_paths(&exe, Some(&home), true).expect("uninstall");
+        let summary = uninstall_paths(&exe, Some(&config_dir), true).expect("uninstall");
         assert_eq!(summary.removed_config, Some(true));
         assert!(!config_dir.exists());
     }
