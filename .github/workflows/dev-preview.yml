@@ -83,7 +83,7 @@ jobs:
       - name: Package tarball
         run: |
           mkdir -p dist
-          tar -C "target/${{ matrix.target }}/release" \
+          tar -C "target/${{ matrix.rust_target || matrix.target }}/release" \
             -czf "dist/${{ matrix.asset }}" \
             "${{ env.BIN_NAME }}"
 
