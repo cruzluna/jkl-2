@@ -47,6 +47,40 @@ const paneIdGenerator: Fig.Generator = {
       }),
 };
 
+
+const windowIdGenerator: Fig.Generator = {
+  script: 'tmux list-windows -a -F "#{window_id}|#{window_name}|#{session_name}" 2>/dev/null',
+  postProcess: (output) =>
+    output
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [windowId, windowName, sessionName] = line.split("|");
+        return {
+          name: windowId,
+          description:
+            sessionName && windowName
+              ? `tmux window: ${sessionName}:${windowName}`
+              : "tmux window id",
+        };
+      }),
+};
+
+const windowNameGenerator: Fig.Generator = {
+  script: 'tmux list-windows -a -F "#{window_name}|#{session_name}" 2>/dev/null',
+  postProcess: (output) =>
+    output
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [windowName, sessionName] = line.split("|");
+        return {
+          name: windowName,
+          description: sessionName ? `tmux session: ${sessionName}` : "tmux window",
+        };
+      }),
+};
+
 const completionSpec: Fig.Spec = {
   name: "jkl",
   description: "Inspect agent statuses in tmux sessions",
@@ -112,6 +146,22 @@ const completionSpec: Fig.Spec = {
           args: {
             name: "pane_id",
             generators: paneIdGenerator,
+          },
+        },
+        {
+          name: "--window-id",
+          description: "Window id when updating a pane entry",
+          args: {
+            name: "window_id",
+            generators: windowIdGenerator,
+          },
+        },
+        {
+          name: "--window-name",
+          description: "Human-friendly window name",
+          args: {
+            name: "window_name",
+            generators: windowNameGenerator,
           },
         },
         {

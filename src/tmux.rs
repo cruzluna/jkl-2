@@ -12,6 +12,8 @@ pub struct TmuxSession {
 #[derive(Clone, Debug)]
 pub struct TmuxPane {
     pub session_name: String,
+    pub window_id: String,
+    pub window_name: String,
     pub pane_id: String,
 }
 
@@ -51,7 +53,12 @@ pub fn list_sessions() -> Result<Vec<TmuxSession>, io::Error> {
 
 pub fn list_panes() -> Result<Vec<TmuxPane>, io::Error> {
     let output = Command::new("tmux")
-        .args(["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}"])
+        .args([
+            "list-panes",
+            "-a",
+            "-F",
+            "#{session_name}\t#{window_id}\t#{window_name}\t#{pane_id}",
+        ])
         .output()?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -63,15 +70,23 @@ pub fn list_panes() -> Result<Vec<TmuxPane>, io::Error> {
     let panes: Vec<TmuxPane> = raw_output
         .lines()
         .filter_map(|line| {
-            let mut parts = line.splitn(2, '\t');
+            let mut parts = line.splitn(4, '\t');
             let session_name = parts.next()?.trim();
+            let window_id = parts.next()?.trim();
+            let window_name = parts.next()?.trim();
             let pane_id = parts.next()?.trim();
-            if session_name.is_empty() || pane_id.is_empty() {
+            if session_name.is_empty()
+                || window_id.is_empty()
+                || window_name.is_empty()
+                || pane_id.is_empty()
+            {
                 debug!("skipping invalid pane line: {}", line);
                 None
             } else {
                 let pane = TmuxPane {
                     session_name: session_name.to_string(),
+                    window_id: window_id.to_string(),
+                    window_name: window_name.to_string(),
                     pane_id: pane_id.to_string(),
                 };
                 debug!("parsed pane: {:?}", pane);
@@ -197,14 +212,21 @@ esac
     fn list_panes_parses_output() {
         let mut env = EnvGuard::new("tmux-list-panes");
         setup_fake_tmux(&mut env);
-        env.set_var("TMUX_LIST_PANES", "alpha\t%1\nbeta\t%2\n");
+        env.set_var(
+            "TMUX_LIST_PANES",
+            "alpha\t@10\teditor\t%1\nbeta\t@20\tserver\t%2\n",
+        );
         env.remove_var("TMUX_LIST_PANES_EXIT");
 
         let panes = list_panes().expect("list panes");
         assert_eq!(panes.len(), 2);
         assert_eq!(panes[0].session_name, "alpha");
+        assert_eq!(panes[0].window_id, "@10");
+        assert_eq!(panes[0].window_name, "editor");
         assert_eq!(panes[0].pane_id, "%1");
         assert_eq!(panes[1].session_name, "beta");
+        assert_eq!(panes[1].window_id, "@20");
+        assert_eq!(panes[1].window_name, "server");
         assert_eq!(panes[1].pane_id, "%2");
     }
 
