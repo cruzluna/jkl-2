@@ -4,6 +4,12 @@ This repository includes a Fig completion spec at:
 
 - `completions/fig/jkl.ts`
 
+To sync and build it in your local Fig repository:
+
+```
+jkl init fig-autocomplete
+```
+
 ## Why this approach
 
 `jkl` currently uses `clap` v4, while the documented Rust `clap_complete_fig`

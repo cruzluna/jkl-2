@@ -42,12 +42,6 @@ ensure_fig_repo_dir() {
     return 0
   fi
 
-  if [[ "$FIG_REPO_DIR" == "$HOME/.fig/autocomplete" && -d "$FALLBACK_FIG_REPO_DIR" ]]; then
-    FIG_REPO_DIR="$FALLBACK_FIG_REPO_DIR"
-    FIG_SPEC_DEST="$FIG_REPO_DIR/src/jkl.ts"
-    return 0
-  fi
-
   if [[ "$AUTO_INIT" != "1" ]]; then
     cat >&2 <<EOF
 Fig autocomplete repo not found at: $FIG_REPO_DIR

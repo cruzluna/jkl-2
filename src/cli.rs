@@ -1,8 +1,10 @@
 use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand};
 use log::{debug, info};
+use std::path::PathBuf;
 
 use crate::context::{AgentStatus, ContextError};
+use crate::init::{InitScope, InitTool};
 use crate::tui::TuiError;
 
 #[derive(Parser)]
@@ -18,6 +20,7 @@ enum Commands {
     Upsert(UpsertArgs),
     Rename(RenameArgs),
     Sync,
+    Init(InitArgs),
     Update(UpdateArgs),
     Uninstall(UninstallArgs),
 }
@@ -80,6 +83,49 @@ struct UninstallArgs {
     purge_data: bool,
 }
 
+#[derive(Args)]
+struct InitArgs {
+    #[command(subcommand)]
+    command: Option<InitCommands>,
+}
+
+#[derive(Subcommand)]
+enum InitCommands {
+    Hooks(InitHooksArgs),
+    Skills(InitSkillsArgs),
+    FigAutocomplete,
+}
+
+#[derive(Args)]
+struct InitHooksArgs {
+    /// Target integration tool.
+    #[arg(long, value_enum)]
+    tool: Option<InitTool>,
+    /// Where to write configuration (project-local or HOME-global).
+    #[arg(long, value_enum)]
+    scope: Option<InitScope>,
+    /// Directory to scan for Kiro agent config JSON files during selection.
+    /// This does not update all files automatically.
+    #[arg(long = "agent-config-dir", alias = "agents-dir", alias = "agent-dir")]
+    agent_config_dir: Option<PathBuf>,
+    /// Explicit Kiro agent config JSON file path(s) to update.
+    #[arg(long = "agent-config", alias = "config", num_args = 1..)]
+    agent_config: Option<Vec<PathBuf>>,
+    /// Disable prompts; requires explicit options for deterministic automation.
+    #[arg(long)]
+    non_interactive: bool,
+}
+
+#[derive(Args)]
+struct InitSkillsArgs {
+    #[arg(long, value_enum)]
+    tool: Option<InitTool>,
+    #[arg(long, value_enum)]
+    scope: Option<InitScope>,
+    #[arg(long)]
+    non_interactive: bool,
+}
+
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     debug!("cli parsed");
@@ -99,6 +145,10 @@ pub fn run() -> Result<()> {
         Commands::Sync => {
             info!("command=sync");
             handle_sync()?
+        }
+        Commands::Init(args) => {
+            info!("command=init");
+            handle_init(args)?
         }
         Commands::Update(args) => {
             info!("command=update");
@@ -209,6 +259,24 @@ fn resolve_update_channel(args: UpdateArgs) -> Result<crate::update::UpdateChann
     }
 
     Ok(crate::update::UpdateChannel::Stable)
+}
+
+fn handle_init(args: InitArgs) -> Result<()> {
+    eprintln!("Warning: 'jkl init' is experimental and may change without notice.");
+    match args.command {
+        Some(InitCommands::Hooks(cmd)) => crate::init::run_hooks(
+            cmd.tool,
+            cmd.scope,
+            cmd.agent_config_dir,
+            cmd.agent_config,
+            cmd.non_interactive,
+        ),
+        Some(InitCommands::Skills(cmd)) => {
+            crate::init::run_skills(cmd.tool, cmd.scope, cmd.non_interactive)
+        }
+        Some(InitCommands::FigAutocomplete) => crate::init::run_fig_autocomplete(),
+        None => crate::init::run_interactive(),
+    }
 }
 
 fn handle_uninstall(args: UninstallArgs) -> Result<()> {
