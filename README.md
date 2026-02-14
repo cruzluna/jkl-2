@@ -22,6 +22,11 @@ curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/install.sh | 
 ```
 
 Optional: set `JKL_INSTALL_DIR` to choose where binaries/scripts are installed.
+On Linux, the installer picks:
+
+- `*-unknown-linux-musl` on Alpine
+- `x86_64-unknown-linux-gnu-al2` on Amazon Linux 2
+- `*-unknown-linux-gnu` otherwise
 
 The installer adds:
 
@@ -32,6 +37,25 @@ To force this in non-interactive installs, set:
 
 - `JKL_INSTALL_FIG_COMPLETIONS=1` to install
 - `JKL_INSTALL_FIG_COMPLETIONS=0` to skip
+
+### Release Asset (manual)
+
+Use install overrides instead of downloading/extracting assets manually.
+
+```bash
+# specific release tag:
+JKL_INSTALL_TAG=v0.2.0 curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/install.sh | bash
+
+# specific target (example: musl):
+JKL_INSTALL_TARGET=x86_64-unknown-linux-musl curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/install.sh | bash
+
+# both:
+JKL_INSTALL_TAG=v0.2.0-rc.1 JKL_INSTALL_TARGET=aarch64-unknown-linux-gnu curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/install.sh | bash
+```
+
+Optional override:
+
+- `JKL_INSTALL_ASSET_SUFFIX=-al2` to force an asset suffix (normally auto-detected on Amazon Linux 2)
 
 ### Cargo
 
@@ -66,6 +90,7 @@ jkl-sync-fig-autocomplete
 
 Master pre-releases are selected from tags that include `-rc.` (for example, `v0.2.0-rc.1`).
 Dev previews are selected from tags that include `-dev.` (for example, `v0.2.0-dev.42.abc1234`).
+`jkl update` keeps the installed binary target (for example, a `*-unknown-linux-musl` install updates to `*-unknown-linux-musl` assets). On Amazon Linux 2, `jkl update` automatically selects `-al2` release assets.
 
 If you installed via Cargo:
 
@@ -100,7 +125,10 @@ The update command and install script expect GitHub release assets named:
 - `jkl-x86_64-apple-darwin.tar.gz`
 - `jkl-aarch64-apple-darwin.tar.gz`
 - `jkl-x86_64-unknown-linux-gnu.tar.gz`
+- `jkl-x86_64-unknown-linux-gnu-al2.tar.gz`
 - `jkl-aarch64-unknown-linux-gnu.tar.gz`
+- `jkl-x86_64-unknown-linux-musl.tar.gz`
+- `jkl-aarch64-unknown-linux-musl.tar.gz`
 
 Each archive should contain the `jkl` binary at the top level.
 
