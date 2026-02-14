@@ -75,16 +75,14 @@ jkl-sync-fig-autocomplete
 To include pre-releases:
 
 ```
-jkl update pre-release
-# equivalent:
-jkl update --prerelease
+jkl update --pre-release
 jkl-sync-fig-autocomplete
 ```
 
 To include dev preview builds from the `dev` branch:
 
 ```
-jkl update pre-release --dev
+jkl update --pre-release --dev
 jkl-sync-fig-autocomplete
 ```
 
@@ -146,8 +144,8 @@ Each archive should contain the `jkl` binary at the top level.
 - Rename session entry: `jkl rename <session_id> <session_name...>`
 - Sync persisted metadata with live tmux state: `jkl sync`
 - Update from stable channel: `jkl update`
-- Update from master pre-release channel: `jkl update pre-release`
-- Update from dev preview channel: `jkl update pre-release --dev`
+- Update from master pre-release channel: `jkl update --pre-release`
+- Update from dev preview channel: `jkl update --pre-release --dev`
 - Uninstall binary from current location: `jkl uninstall [--purge-data]`
 - Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
 
