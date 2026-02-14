@@ -5,6 +5,7 @@ BIN_NAME="jkl"
 REPO="cruzluna/jkl-2"
 SYNC_SCRIPT_NAME="jkl-sync-fig-autocomplete"
 INSTALL_DIR="${JKL_INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_TAG="${JKL_INSTALL_TAG:-latest}"
 
 should_install_fig_helper() {
   case "${JKL_INSTALL_FIG_COMPLETIONS:-}" in
@@ -33,12 +34,33 @@ should_install_fig_helper() {
   return 1
 }
 
+is_amazon_linux_2() {
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    if [[ "${ID:-}" == "amzn" && ( "${VERSION_ID:-}" == "2" || "${VERSION_ID:-}" == 2.* ) ]]; then
+      return 0
+    fi
+  fi
+
+  if [[ -r /etc/system-release ]] && grep -qi "Amazon Linux release 2" /etc/system-release; then
+    return 0
+  fi
+
+  return 1
+}
+
 uname_s="$(uname -s)"
 uname_m="$(uname -m)"
 
 case "$uname_s" in
   Darwin) os="apple-darwin" ;;
-  Linux) os="unknown-linux-gnu" ;;
+  Linux)
+    os="unknown-linux-gnu"
+    if [[ -f /etc/alpine-release ]]; then
+      os="unknown-linux-musl"
+    fi
+    ;;
   *)
     echo "Unsupported OS: $uname_s" >&2
     exit 1
@@ -54,9 +76,31 @@ case "$uname_m" in
     ;;
 esac
 
+asset_suffix=""
 target="${arch}-${os}"
-archive="${BIN_NAME}-${target}.tar.gz"
-url="https://github.com/${REPO}/releases/latest/download/${archive}"
+if [[ -n "${JKL_INSTALL_TARGET:-}" ]]; then
+  target="${JKL_INSTALL_TARGET}"
+fi
+
+if [[ "$target" == *"-al2" ]]; then
+  target="${target%-al2}"
+  if [[ -z "${JKL_INSTALL_ASSET_SUFFIX:-}" ]]; then
+    asset_suffix="-al2"
+  fi
+fi
+
+if [[ -n "${JKL_INSTALL_ASSET_SUFFIX:-}" ]]; then
+  asset_suffix="${JKL_INSTALL_ASSET_SUFFIX}"
+elif [[ "$target" == *"-unknown-linux-gnu" ]] && is_amazon_linux_2; then
+  asset_suffix="-al2"
+fi
+
+archive="${BIN_NAME}-${target}${asset_suffix}.tar.gz"
+if [[ "$INSTALL_TAG" == "latest" ]]; then
+  url="https://github.com/${REPO}/releases/latest/download/${archive}"
+else
+  url="https://github.com/${REPO}/releases/download/${INSTALL_TAG}/${archive}"
+fi
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
