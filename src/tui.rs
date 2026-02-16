@@ -102,6 +102,8 @@ struct WindowRow {
 struct PaneRow {
     /// The pane ID
     id: String,
+    /// The tmux window ID containing this pane
+    window_id: String,
     /// Temporary name of a pane, likely to fall out of sync with the pane ID
     alias: Option<String>,
     /// The status of the pane
@@ -430,6 +432,8 @@ impl App {
                     info!("tui switching to session_id={}", window.session_id);
                     crate::tmux::switch_client(&window.session_id)
                         .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                    crate::tmux::select_window(&window.id)
+                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
                 }
                 RowItem::Pane(pane) => {
                     info!(
@@ -437,6 +441,8 @@ impl App {
                         pane.id, pane.session_id
                     );
                     crate::tmux::switch_client(&pane.session_id)
+                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                    crate::tmux::select_window(&pane.window_id)
                         .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
                     crate::tmux::select_pane(&pane.id)
                         .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
@@ -922,6 +928,7 @@ fn build_sessions(
                             );
                             PaneRow {
                                 id: pane_id,
+                                window_id: window_id.clone(),
                                 alias: pane_alias,
                                 status: pane_status,
                                 context: pane_context_value,
@@ -1100,6 +1107,10 @@ target="${3:-}"
 case "$cmd" in
   switch-client)
     printf "switch-client:%s\n" "$target" >> "$log_file"
+    exit 0
+    ;;
+  select-window)
+    printf "select-window:%s\n" "$target" >> "$log_file"
     exit 0
     ;;
   select-pane)
@@ -1312,6 +1323,7 @@ esac
                 context: "wctx".to_string(),
                 panes: vec![PaneRow {
                     id: "%1".to_string(),
+                    window_id: "@10".to_string(),
                     alias: Some("verylongalias".to_string()),
                     status: None,
                     context: "p1".to_string(),
@@ -1345,6 +1357,7 @@ esac
                     panes: vec![
                         PaneRow {
                             id: "%1".to_string(),
+                            window_id: "@10".to_string(),
                             alias: None,
                             status: None,
                             context: "p1".to_string(),
@@ -1352,6 +1365,7 @@ esac
                         },
                         PaneRow {
                             id: "%2".to_string(),
+                            window_id: "@10".to_string(),
                             alias: None,
                             status: None,
                             context: "p2".to_string(),
@@ -1397,6 +1411,7 @@ esac
                 context: "wctx".to_string(),
                 panes: vec![PaneRow {
                     id: "%9".to_string(),
+                    window_id: "@10".to_string(),
                     alias: None,
                     status: None,
                     context: "pctx".to_string(),
@@ -1415,6 +1430,65 @@ esac
         app.switch_session().expect("switch");
 
         let log = fs::read_to_string(&log_path).expect("read log");
-        assert_eq!(log, "switch-client:@1\nselect-pane:%9\n");
+        assert_eq!(log, "switch-client:@1\nselect-window:@10\nselect-pane:%9\n");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn switch_session_on_pane_switches_to_target_window() {
+        let mut env = EnvGuard::new("tui-switch-pane-window-target");
+        setup_fake_tmux(&mut env);
+        let log_path = env.temp_dir().join("tmux.log");
+        env.set_var("TMUX_LOG_FILE", &log_path);
+
+        let sessions = vec![SessionRow {
+            id: "@1".to_string(),
+            name: "alpha".to_string(),
+            status: None,
+            context: "ctx".to_string(),
+            windows: vec![
+                WindowRow {
+                    id: "@10".to_string(),
+                    name: "editor".to_string(),
+                    status: None,
+                    context: "wctx1".to_string(),
+                    panes: vec![PaneRow {
+                        id: "%1".to_string(),
+                        window_id: "@10".to_string(),
+                        alias: None,
+                        status: None,
+                        context: "p1".to_string(),
+                        session_id: "@1".to_string(),
+                    }],
+                    session_id: "@1".to_string(),
+                },
+                WindowRow {
+                    id: "@20".to_string(),
+                    name: "server".to_string(),
+                    status: None,
+                    context: "wctx2".to_string(),
+                    panes: vec![PaneRow {
+                        id: "%9".to_string(),
+                        window_id: "@20".to_string(),
+                        alias: None,
+                        status: None,
+                        context: "p9".to_string(),
+                        session_id: "@1".to_string(),
+                    }],
+                    session_id: "@1".to_string(),
+                },
+            ],
+        }];
+
+        let mut app =
+            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+        app.state.select(Some(4));
+
+        app.switch_session().expect("switch");
+
+        let log = fs::read_to_string(&log_path).expect("read log");
+        assert_eq!(log, "switch-client:@1\nselect-window:@20\nselect-pane:%9\n");
     }
 }
