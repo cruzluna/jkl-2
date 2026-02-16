@@ -38,4 +38,5 @@ Use this as the default playbook for coding agents in this repository.
 - Make minimal, targeted changes.
 - Preserve existing CLI behavior and keybindings unless requested.
 - Update docs when commands or behavior change.
-
+- Defer to runtime tmux values for targeting and navigation. Session/window/pane IDs can change after tmux resurrect or restart.
+- Treat persisted context IDs as advisory metadata. Re-resolve live IDs from tmux (`list-sessions`, `list-panes`, pane targets) before executing switch/select commands.
