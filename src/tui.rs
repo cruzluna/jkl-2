@@ -420,14 +420,28 @@ impl App {
     /// Switches to the selected session or pane
     fn switch_session(&self) -> Result<(), TuiError> {
         if let Some(row) = self.selected_row() {
-            let target_session_id = match row {
-                RowItem::Session(session) => session.id.as_str(),
-                RowItem::Window(window) => window.session_id.as_str(),
-                RowItem::Pane(pane) => pane.session_id.as_str(),
-            };
-            info!("tui switching to session_id={}", target_session_id);
-            crate::tmux::switch_client(target_session_id)
-                .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+            match row {
+                RowItem::Session(session) => {
+                    info!("tui switching to session_id={}", session.id);
+                    crate::tmux::switch_client(&session.id)
+                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                }
+                RowItem::Window(window) => {
+                    info!("tui switching to session_id={}", window.session_id);
+                    crate::tmux::switch_client(&window.session_id)
+                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                }
+                RowItem::Pane(pane) => {
+                    info!(
+                        "tui switching to pane_id={} in session_id={}",
+                        pane.id, pane.session_id
+                    );
+                    crate::tmux::switch_client(&pane.session_id)
+                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                    crate::tmux::select_pane(&pane.id)
+                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                }
+            }
         }
         Ok(())
     }
@@ -1054,8 +1068,14 @@ fn status_style(status: Option<&crate::context::AgentStatus>) -> Style {
 mod tests {
     use super::*;
     use crate::context::{AgentStatus, PaneContext, SessionContext, WindowContext, session_key};
+    #[cfg(unix)]
+    use crate::test_utils::EnvGuard;
     use crate::tmux::{TmuxPane, TmuxSession};
     use std::collections::HashMap;
+    #[cfg(unix)]
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn session_row(id: &str, name: &str) -> SessionRow {
         SessionRow {
@@ -1065,6 +1085,41 @@ mod tests {
             context: "ctx".to_string(),
             windows: Vec::new(),
         }
+    }
+
+    #[cfg(unix)]
+    fn setup_fake_tmux(env: &mut EnvGuard) {
+        let bin_dir = env.temp_dir().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let script_path = bin_dir.join("tmux");
+        let script = r#"#!/bin/sh
+set -eu
+log_file="${TMUX_LOG_FILE:?}"
+cmd="${1:-}"
+target="${3:-}"
+case "$cmd" in
+  switch-client)
+    printf "switch-client:%s\n" "$target" >> "$log_file"
+    exit 0
+    ;;
+  select-pane)
+    printf "select-pane:%s\n" "$target" >> "$log_file"
+    exit 0
+    ;;
+  *)
+    printf "unsupported:%s\n" "$cmd" >> "$log_file"
+    exit 1
+    ;;
+esac
+"#;
+        fs::write(&script_path, script).expect("write tmux script");
+        let mut perms = fs::metadata(&script_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).expect("chmod");
+
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_dir.display(), old_path);
+        env.set_var("PATH", new_path);
     }
 
     #[test]
@@ -1320,5 +1375,46 @@ mod tests {
             RowItem::Session(row) => assert_eq!(row.id, "@2"),
             RowItem::Window(_) | RowItem::Pane(_) => panic!("expected session row"),
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn switch_session_on_pane_selects_target_pane() {
+        let mut env = EnvGuard::new("tui-switch-pane-target");
+        setup_fake_tmux(&mut env);
+        let log_path = env.temp_dir().join("tmux.log");
+        env.set_var("TMUX_LOG_FILE", &log_path);
+
+        let sessions = vec![SessionRow {
+            id: "@1".to_string(),
+            name: "alpha".to_string(),
+            status: None,
+            context: "ctx".to_string(),
+            windows: vec![WindowRow {
+                id: "@10".to_string(),
+                name: "editor".to_string(),
+                status: None,
+                context: "wctx".to_string(),
+                panes: vec![PaneRow {
+                    id: "%9".to_string(),
+                    alias: None,
+                    status: None,
+                    context: "pctx".to_string(),
+                    session_id: "@1".to_string(),
+                }],
+                session_id: "@1".to_string(),
+            }],
+        }];
+
+        let mut app =
+            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+        app.state.select(Some(2));
+
+        app.switch_session().expect("switch");
+
+        let log = fs::read_to_string(&log_path).expect("read log");
+        assert_eq!(log, "switch-client:@1\nselect-pane:%9\n");
     }
 }

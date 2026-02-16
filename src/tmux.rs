@@ -110,6 +110,19 @@ pub fn switch_client(target: &str) -> Result<(), io::Error> {
     Ok(())
 }
 
+pub fn select_pane(target: &str) -> Result<(), io::Error> {
+    let output = Command::new("tmux")
+        .args(["select-pane", "-t", target])
+        .output()?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        debug!("tmux select-pane failed target={} stderr={}", target, message);
+        return Err(io::Error::new(io::ErrorKind::Other, message));
+    }
+    debug!("tmux select-pane target={}", target);
+    Ok(())
+}
+
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
