@@ -116,10 +116,29 @@ pub fn select_pane(target: &str) -> Result<(), io::Error> {
         .output()?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        debug!("tmux select-pane failed target={} stderr={}", target, message);
+        debug!(
+            "tmux select-pane failed target={} stderr={}",
+            target, message
+        );
         return Err(io::Error::new(io::ErrorKind::Other, message));
     }
     debug!("tmux select-pane target={}", target);
+    Ok(())
+}
+
+pub fn select_window(target: &str) -> Result<(), io::Error> {
+    let output = Command::new("tmux")
+        .args(["select-window", "-t", target])
+        .output()?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        debug!(
+            "tmux select-window failed target={} stderr={}",
+            target, message
+        );
+        return Err(io::Error::new(io::ErrorKind::Other, message));
+    }
+    debug!("tmux select-window target={}", target);
     Ok(())
 }
 
@@ -157,6 +176,13 @@ case "$1" in
   switch-client)
     if [ "${TMUX_SWITCH_FAIL:-0}" -ne 0 ]; then
       echo "${TMUX_SWITCH_ERR:-error}" 1>&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  select-window)
+    if [ "${TMUX_SELECT_WINDOW_FAIL:-0}" -ne 0 ]; then
+      echo "${TMUX_SELECT_WINDOW_ERR:-error}" 1>&2
       exit 1
     fi
     exit 0
@@ -274,5 +300,26 @@ esac
         let err = switch_client("@1").expect_err("expected error");
         assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), "no client");
+    }
+
+    #[test]
+    fn select_window_success() {
+        let mut env = EnvGuard::new("tmux-select-window-ok");
+        setup_fake_tmux(&mut env);
+        env.remove_var("TMUX_SELECT_WINDOW_FAIL");
+
+        select_window("@1").expect("select window");
+    }
+
+    #[test]
+    fn select_window_returns_error_on_failure() {
+        let mut env = EnvGuard::new("tmux-select-window-error");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_SELECT_WINDOW_FAIL", "1");
+        env.set_var("TMUX_SELECT_WINDOW_ERR", "no window");
+
+        let err = select_window("@1").expect_err("expected error");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "no window");
     }
 }
