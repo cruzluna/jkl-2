@@ -15,7 +15,7 @@ use log::{debug, info};
 const DATA_NOT_RECEIVED: &str = "-";
 // TODO: Will make this configurable in the future.
 const PANE_LABEL_MAX_WIDTH: usize = 10;
-const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (r) refresh";
+const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (x) delete selected | (r) refresh";
 
 #[derive(Error, Debug)]
 pub enum TuiError {
@@ -155,6 +155,8 @@ enum ListViewModes {
     NormalMode,
     /// Mode when searching for a session or pane
     SearchMode,
+    /// Mode when waiting for a second `x` to confirm deletion.
+    DeleteConfirmMode(RowKey),
 }
 
 struct SearchQuery {
@@ -246,6 +248,8 @@ impl App {
                         }
                         _ => {}
                     }
+                } else if matches!(self.mode, ListViewModes::DeleteConfirmMode(_)) {
+                    self.handle_delete_mode_key(key.code)?;
                 } else {
                     // Normal mode keybindings
                     if let KeyCode::Char(c) = key.code
@@ -278,6 +282,7 @@ impl App {
                         }
                         KeyCode::Char('l') => self.expand_selected(),
                         KeyCode::Char('h') => self.collapse_selected(),
+                        KeyCode::Char('x') => self.enter_delete_mode(),
                         KeyCode::Char('r') => {
                             info!("tui refresh requested");
                             self.refresh_panes()?;
@@ -452,6 +457,69 @@ impl App {
         Ok(())
     }
 
+    fn enter_delete_mode(&mut self) {
+        if let Some(key) = self.selected_key() {
+            self.mode = ListViewModes::DeleteConfirmMode(key);
+        }
+    }
+
+    fn handle_delete_mode_key(&mut self, key_code: KeyCode) -> Result<(), TuiError> {
+        if !matches!(key_code, KeyCode::Char('x')) {
+            self.mode = ListViewModes::NormalMode;
+            return Ok(());
+        }
+
+        let target = match &self.mode {
+            ListViewModes::DeleteConfirmMode(target) => Some(target.clone()),
+            ListViewModes::NormalMode | ListViewModes::SearchMode => None,
+        };
+        self.mode = ListViewModes::NormalMode;
+
+        if let Some(target) = target {
+            self.delete_row(&target)?;
+        }
+        Ok(())
+    }
+
+    fn delete_row(&mut self, target: &RowKey) -> Result<(), TuiError> {
+        match target {
+            RowKey::Session(session_id) => {
+                info!("tui deleting session_id={}", session_id);
+                crate::tmux::kill_session(session_id)
+                    .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+            }
+            RowKey::Window { window_id, .. } => {
+                info!("tui deleting window_id={}", window_id);
+                crate::tmux::kill_window(window_id)
+                    .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+            }
+            RowKey::Pane { pane_id, .. } => {
+                info!("tui deleting pane_id={}", pane_id);
+                crate::tmux::kill_pane(pane_id)
+                    .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+            }
+        }
+        self.reload_data()?;
+        Ok(())
+    }
+
+    fn delete_prompt_text(&self) -> Option<String> {
+        let target = match &self.mode {
+            ListViewModes::DeleteConfirmMode(target) => target,
+            ListViewModes::NormalMode | ListViewModes::SearchMode => return None,
+        };
+
+        let subject = match target {
+            RowKey::Session(session_id) => format!("session {session_id}"),
+            RowKey::Window { window_id, .. } => format!("window {window_id}"),
+            RowKey::Pane { pane_id, .. } => format!("pane {pane_id}"),
+        };
+
+        Some(format!(
+            "Delete {subject}? Press x again to confirm; any other key cancels."
+        ))
+    }
+
     fn expand_selected(&mut self) {
         let previous = self.selected_key();
         let session_id = self.selected_row().map(|row| match row {
@@ -593,11 +661,14 @@ impl App {
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::horizontal([Constraint::Min(1), Constraint::Length(9)]).split(area);
-        let footer = Paragraph::new(Text::from(INFO_TEXT));
-        let mode = if matches!(self.mode, ListViewModes::SearchMode) {
-            "[SEARCH]"
-        } else {
-            "[NORMAL]"
+        let footer_text = self
+            .delete_prompt_text()
+            .unwrap_or_else(|| INFO_TEXT.to_string());
+        let footer = Paragraph::new(Text::from(footer_text));
+        let mode = match &self.mode {
+            ListViewModes::SearchMode => "[SEARCH]",
+            ListViewModes::DeleteConfirmMode(_) => "[COMMAND]",
+            ListViewModes::NormalMode => "[NORMAL]",
         };
         let mode_widget = Paragraph::new(Text::from(mode)).alignment(Alignment::Right);
 
@@ -1094,6 +1165,30 @@ mod tests {
         }
     }
 
+    fn session_with_window_and_pane() -> SessionRow {
+        SessionRow {
+            id: "@1".to_string(),
+            name: "alpha".to_string(),
+            status: None,
+            context: "ctx".to_string(),
+            windows: vec![WindowRow {
+                id: "@10".to_string(),
+                name: "editor".to_string(),
+                status: None,
+                context: "wctx".to_string(),
+                panes: vec![PaneRow {
+                    id: "%1".to_string(),
+                    window_id: "@10".to_string(),
+                    alias: None,
+                    status: None,
+                    context: "pctx".to_string(),
+                    session_id: "@1".to_string(),
+                }],
+                session_id: "@1".to_string(),
+            }],
+        }
+    }
+
     #[cfg(unix)]
     fn setup_fake_tmux(env: &mut EnvGuard) {
         let bin_dir = env.temp_dir().join("bin");
@@ -1105,6 +1200,14 @@ log_file="${TMUX_LOG_FILE:?}"
 cmd="${1:-}"
 target="${3:-}"
 case "$cmd" in
+  list-sessions)
+    printf "%s" "${TMUX_LIST_SESSIONS:-}"
+    exit 0
+    ;;
+  list-panes)
+    printf "%s" "${TMUX_LIST_PANES:-}"
+    exit 0
+    ;;
   switch-client)
     printf "switch-client:%s\n" "$target" >> "$log_file"
     exit 0
@@ -1115,6 +1218,18 @@ case "$cmd" in
     ;;
   select-pane)
     printf "select-pane:%s\n" "$target" >> "$log_file"
+    exit 0
+    ;;
+  kill-session)
+    printf "kill-session:%s\n" "$target" >> "$log_file"
+    exit 0
+    ;;
+  kill-window)
+    printf "kill-window:%s\n" "$target" >> "$log_file"
+    exit 0
+    ;;
+  kill-pane)
+    printf "kill-pane:%s\n" "$target" >> "$log_file"
     exit 0
     ;;
   *)
@@ -1389,6 +1504,109 @@ esac
             RowItem::Session(row) => assert_eq!(row.id, "@2"),
             RowItem::Window(_) | RowItem::Pane(_) => panic!("expected session row"),
         }
+    }
+
+    #[test]
+    fn delete_mode_exits_on_non_x_key() {
+        let sessions = vec![session_row("@1", "alpha")];
+        let mut app =
+            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+
+        app.enter_delete_mode();
+        match &app.mode {
+            ListViewModes::DeleteConfirmMode(RowKey::Session(session_id)) => {
+                assert_eq!(session_id, "@1");
+            }
+            ListViewModes::NormalMode | ListViewModes::SearchMode => {
+                panic!("expected delete confirmation mode")
+            }
+            ListViewModes::DeleteConfirmMode(RowKey::Window { .. })
+            | ListViewModes::DeleteConfirmMode(RowKey::Pane { .. }) => {
+                panic!("expected session deletion target")
+            }
+        }
+
+        app.handle_delete_mode_key(KeyCode::Char('j'))
+            .expect("cancel delete mode");
+        assert!(matches!(app.mode, ListViewModes::NormalMode));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn delete_mode_on_session_deletes_on_second_x() {
+        let mut env = EnvGuard::new("tui-delete-session");
+        env.set_temp_home();
+        setup_fake_tmux(&mut env);
+        let log_path = env.temp_dir().join("tmux.log");
+        env.set_var("TMUX_LOG_FILE", &log_path);
+        env.set_var("TMUX_LIST_SESSIONS", "");
+        env.set_var("TMUX_LIST_PANES", "");
+
+        let sessions = vec![session_row("@1", "alpha")];
+        let mut app =
+            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        app.enter_delete_mode();
+
+        app.handle_delete_mode_key(KeyCode::Char('x'))
+            .expect("confirm delete");
+
+        assert!(matches!(app.mode, ListViewModes::NormalMode));
+        let log = fs::read_to_string(&log_path).expect("read log");
+        assert_eq!(log, "kill-session:@1\n");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn delete_mode_on_window_deletes_on_second_x() {
+        let mut env = EnvGuard::new("tui-delete-window");
+        env.set_temp_home();
+        setup_fake_tmux(&mut env);
+        let log_path = env.temp_dir().join("tmux.log");
+        env.set_var("TMUX_LOG_FILE", &log_path);
+        env.set_var("TMUX_LIST_SESSIONS", "");
+        env.set_var("TMUX_LIST_PANES", "");
+
+        let sessions = vec![session_with_window_and_pane()];
+        let mut app =
+            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+        app.state.select(Some(1));
+        app.enter_delete_mode();
+
+        app.handle_delete_mode_key(KeyCode::Char('x'))
+            .expect("confirm delete");
+
+        assert!(matches!(app.mode, ListViewModes::NormalMode));
+        let log = fs::read_to_string(&log_path).expect("read log");
+        assert_eq!(log, "kill-window:@10\n");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn delete_mode_on_pane_deletes_on_second_x() {
+        let mut env = EnvGuard::new("tui-delete-pane");
+        env.set_temp_home();
+        setup_fake_tmux(&mut env);
+        let log_path = env.temp_dir().join("tmux.log");
+        env.set_var("TMUX_LOG_FILE", &log_path);
+        env.set_var("TMUX_LIST_SESSIONS", "");
+        env.set_var("TMUX_LIST_PANES", "");
+
+        let sessions = vec![session_with_window_and_pane()];
+        let mut app =
+            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+        app.state.select(Some(2));
+        app.enter_delete_mode();
+
+        app.handle_delete_mode_key(KeyCode::Char('x'))
+            .expect("confirm delete");
+
+        assert!(matches!(app.mode, ListViewModes::NormalMode));
+        let log = fs::read_to_string(&log_path).expect("read log");
+        assert_eq!(log, "kill-pane:%1\n");
     }
 
     #[test]
