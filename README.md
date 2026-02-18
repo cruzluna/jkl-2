@@ -167,30 +167,55 @@ If tpm fails to download plugin:
 $ tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
 ```
 
-Default prefix bindings (only set when the key is currently unbound):
+Default prefix bindings (only set when the key is currently unbound at plugin load time):
 
-- `f`: open `jkl tui` in a popup
+- `f`: open `jkl tui` in a popup (**conflicts with stock tmux `find-window`**)
 - `W`: prompt for context and run `jkl upsert '#S' --session-id '#{session_id}' --context <input>`
 - `e`: open `~/.config/jkl/session_context.json` in `nvim`
 - `S`: open pane status selector popup
 
-You can configure or disable each key:
+jkl intentionally does **not** unbind existing keys for you. This avoids surprising overrides of tmux defaults and user/plugin mappings. If a key is already bound, jkl skips it unless you explicitly opt in to overrides.
 
-```tmux
-# Set custom keys
-set -g @jkl_key_tui 'J'
-set -g @jkl_key_context 'C'
-set -g @jkl_key_edit 'E'
-set -g @jkl_key_pane_state 'P'
+Check what is already bound in your prefix table:
 
-# Disable a binding
-set -g @jkl_key_edit 'none'
+```bash
+tmux list-keys -T prefix
 ```
 
-By default the plugin does not override existing tmux/user bindings. If you want it to force overrides, set:
+Common collisions:
+
+- `f`: stock tmux `find-window`
+- `e`, `W`, `S`: often used by custom tmux configs or other plugins
+
+Recommended: set explicit, low-conflict keys **before** your `set -g @plugin 'cruzluna/jkl-2'` line (and before TPM initialization):
+
+```tmux
+# Set custom keys before: run '~/.tmux/plugins/tpm/tpm'
+set -g @jkl_key_tui 'J'
+set -g @jkl_key_context 'K'
+set -g @jkl_key_edit 'U'
+set -g @jkl_key_pane_state 'P'
+```
+
+If you prefer a conflicting key (for example, `f`), unbind it explicitly before your `set -g @plugin` lines:
+
+```tmux
+unbind-key -T prefix f
+set -g @jkl_key_tui 'f'
+```
+
+You can also force jkl to override bindings that already exist:
 
 ```tmux
 set -g @jkl_force_bind_keys 'on'
+```
+
+TPM loads plugins in the same order as your `set -g @plugin` lines. If a later plugin binds the same key, the later binding wins. Place jkl after conflicting plugins, or use distinct keys.
+
+Disable a binding entirely:
+
+```tmux
+set -g @jkl_key_edit 'none'
 ```
 
 ## Integrations
