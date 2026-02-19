@@ -134,6 +134,10 @@ enum RowKey {
     },
 }
 
+enum CommandMode {
+    DeleteConfirm(RowKey),
+}
+
 impl RowItem {
     fn key(&self) -> RowKey {
         match self {
@@ -155,8 +159,8 @@ enum ListViewModes {
     NormalMode,
     /// Mode when searching for a session or pane
     SearchMode,
-    /// Mode when waiting for a second `x` to confirm deletion.
-    DeleteConfirmMode(RowKey),
+    /// Mode for command confirmations (e.g. delete).
+    CommandMode(CommandMode),
 }
 
 struct SearchQuery {
@@ -248,8 +252,8 @@ impl App {
                         }
                         _ => {}
                     }
-                } else if matches!(self.mode, ListViewModes::DeleteConfirmMode(_)) {
-                    self.handle_delete_mode_key(key.code)?;
+                } else if matches!(self.mode, ListViewModes::CommandMode(_)) {
+                    self.handle_command_mode_key(key.code)?;
                 } else {
                     // Normal mode keybindings
                     if let KeyCode::Char(c) = key.code
@@ -459,18 +463,18 @@ impl App {
 
     fn enter_delete_mode(&mut self) {
         if let Some(key) = self.selected_key() {
-            self.mode = ListViewModes::DeleteConfirmMode(key);
+            self.mode = ListViewModes::CommandMode(CommandMode::DeleteConfirm(key));
         }
     }
 
-    fn handle_delete_mode_key(&mut self, key_code: KeyCode) -> Result<(), TuiError> {
+    fn handle_command_mode_key(&mut self, key_code: KeyCode) -> Result<(), TuiError> {
         if !matches!(key_code, KeyCode::Char('x')) {
             self.mode = ListViewModes::NormalMode;
             return Ok(());
         }
 
         let target = match &self.mode {
-            ListViewModes::DeleteConfirmMode(target) => Some(target.clone()),
+            ListViewModes::CommandMode(CommandMode::DeleteConfirm(target)) => Some(target.clone()),
             ListViewModes::NormalMode | ListViewModes::SearchMode => None,
         };
         self.mode = ListViewModes::NormalMode;
@@ -505,7 +509,7 @@ impl App {
 
     fn delete_prompt_text(&self) -> Option<String> {
         let target = match &self.mode {
-            ListViewModes::DeleteConfirmMode(target) => target,
+            ListViewModes::CommandMode(CommandMode::DeleteConfirm(target)) => target,
             ListViewModes::NormalMode | ListViewModes::SearchMode => return None,
         };
 
@@ -667,7 +671,7 @@ impl App {
         let footer = Paragraph::new(Text::from(footer_text));
         let mode = match &self.mode {
             ListViewModes::SearchMode => "[SEARCH]",
-            ListViewModes::DeleteConfirmMode(_) => "[COMMAND]",
+            ListViewModes::CommandMode(_) => "[COMMAND]",
             ListViewModes::NormalMode => "[NORMAL]",
         };
         let mode_widget = Paragraph::new(Text::from(mode)).alignment(Alignment::Right);
@@ -1514,19 +1518,19 @@ esac
 
         app.enter_delete_mode();
         match &app.mode {
-            ListViewModes::DeleteConfirmMode(RowKey::Session(session_id)) => {
+            ListViewModes::CommandMode(CommandMode::DeleteConfirm(RowKey::Session(session_id))) => {
                 assert_eq!(session_id, "@1");
             }
             ListViewModes::NormalMode | ListViewModes::SearchMode => {
                 panic!("expected delete confirmation mode")
             }
-            ListViewModes::DeleteConfirmMode(RowKey::Window { .. })
-            | ListViewModes::DeleteConfirmMode(RowKey::Pane { .. }) => {
+            ListViewModes::CommandMode(CommandMode::DeleteConfirm(RowKey::Window { .. }))
+            | ListViewModes::CommandMode(CommandMode::DeleteConfirm(RowKey::Pane { .. })) => {
                 panic!("expected session deletion target")
             }
         }
 
-        app.handle_delete_mode_key(KeyCode::Char('j'))
+        app.handle_command_mode_key(KeyCode::Char('j'))
             .expect("cancel delete mode");
         assert!(matches!(app.mode, ListViewModes::NormalMode));
     }
@@ -1547,7 +1551,7 @@ esac
             App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
         app.enter_delete_mode();
 
-        app.handle_delete_mode_key(KeyCode::Char('x'))
+        app.handle_command_mode_key(KeyCode::Char('x'))
             .expect("confirm delete");
 
         assert!(matches!(app.mode, ListViewModes::NormalMode));
@@ -1574,7 +1578,7 @@ esac
         app.state.select(Some(1));
         app.enter_delete_mode();
 
-        app.handle_delete_mode_key(KeyCode::Char('x'))
+        app.handle_command_mode_key(KeyCode::Char('x'))
             .expect("confirm delete");
 
         assert!(matches!(app.mode, ListViewModes::NormalMode));
@@ -1601,7 +1605,7 @@ esac
         app.state.select(Some(2));
         app.enter_delete_mode();
 
-        app.handle_delete_mode_key(KeyCode::Char('x'))
+        app.handle_command_mode_key(KeyCode::Char('x'))
             .expect("confirm delete");
 
         assert!(matches!(app.mode, ListViewModes::NormalMode));
