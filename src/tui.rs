@@ -15,7 +15,25 @@ use log::{debug, info};
 const DATA_NOT_RECEIVED: &str = "-";
 // TODO: Will make this configurable in the future.
 const PANE_LABEL_MAX_WIDTH: usize = 10;
-const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (r) refresh";
+const INFO_TEXT: &str = "(?) help | (Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (r) refresh";
+const HELP_FEEDBACK_TEXT: &str = "Feedback? Please submit an issue on GitHub.";
+const HELP_BINDINGS: [(&str, &str, &str); 15] = [
+    ("Normal", "q / Esc / Ctrl-C", "Quit list view"),
+    ("Normal", "?", "Open this help"),
+    ("Normal", "/", "Search sessions"),
+    ("Normal", "Enter", "Switch to selected row"),
+    ("Normal", "↑/↓ or j/k", "Move selection"),
+    ("Normal", "g / G", "Jump to top/bottom session"),
+    ("Normal", "0-9", "Jump to session index 0-9"),
+    ("Normal", "Opt-a..z", "Jump to session index 10-35"),
+    ("Normal", "l / h", "Expand/collapse details"),
+    ("Normal", "r", "Refresh pane list"),
+    ("Search", "type / Backspace", "Filter sessions"),
+    ("Search", "↑/↓", "Move results"),
+    ("Search", "Esc / Ctrl-C", "Return to list"),
+    ("Search", "Enter", "Switch to selected result"),
+    ("Help", "q / Q / Esc / Ctrl-C", "Return to list"),
+];
 
 #[derive(Error, Debug)]
 pub enum TuiError {
@@ -155,6 +173,8 @@ enum ListViewModes {
     NormalMode,
     /// Mode when searching for a session or pane
     SearchMode,
+    /// Mode when showing keybinding help
+    HelpMode,
 }
 
 struct SearchQuery {
@@ -221,7 +241,17 @@ impl App {
                     continue;
                 }
 
-                if matches!(self.mode, ListViewModes::SearchMode) {
+                if matches!(self.mode, ListViewModes::HelpMode) {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                            self.mode = ListViewModes::NormalMode;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.mode = ListViewModes::NormalMode;
+                        }
+                        _ => {}
+                    }
+                } else if matches!(self.mode, ListViewModes::SearchMode) {
                     match key.code {
                         KeyCode::Esc => {
                             self.mode = ListViewModes::NormalMode;
@@ -263,6 +293,9 @@ impl App {
                         KeyCode::Char('/') => {
                             self.mode = ListViewModes::SearchMode;
                             self.apply_search()?;
+                        }
+                        KeyCode::Char('?') => {
+                            self.mode = ListViewModes::HelpMode;
                         }
                         KeyCode::Enter => {
                             self.switch_session()?;
@@ -528,6 +561,9 @@ impl App {
         self.render_search(frame, sections[0]);
         self.render_table(frame, sections[1]);
         self.render_footer(frame, sections[2]);
+        if matches!(self.mode, ListViewModes::HelpMode) {
+            self.render_help_overlay(frame);
+        }
     }
 
     fn render_search(&self, frame: &mut Frame, area: Rect) {
@@ -593,9 +629,16 @@ impl App {
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::horizontal([Constraint::Min(1), Constraint::Length(9)]).split(area);
-        let footer = Paragraph::new(Text::from(INFO_TEXT));
+        let footer_text = if matches!(self.mode, ListViewModes::HelpMode) {
+            "Help: q/Q/Esc/Ctrl+C back to list"
+        } else {
+            INFO_TEXT
+        };
+        let footer = Paragraph::new(Text::from(footer_text));
         let mode = if matches!(self.mode, ListViewModes::SearchMode) {
             "[SEARCH]"
+        } else if matches!(self.mode, ListViewModes::HelpMode) {
+            "[HELP]"
         } else {
             "[NORMAL]"
         };
@@ -603,6 +646,53 @@ impl App {
 
         frame.render_widget(footer, sections[0]);
         frame.render_widget(mode_widget, sections[1]);
+    }
+
+    fn render_help_overlay(&self, frame: &mut Frame) {
+        let area = centered_rect(92, 80, frame.area());
+        frame.render_widget(Clear, area);
+
+        let block = Block::default().borders(Borders::ALL).title("Key Bindings");
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let sections = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
+
+        let mode_width = HELP_BINDINGS
+            .iter()
+            .map(|(mode, _, _)| UnicodeWidthStr::width(*mode))
+            .max()
+            .unwrap_or(0)
+            .max(UnicodeWidthStr::width("Mode"));
+        let key_width = HELP_BINDINGS
+            .iter()
+            .map(|(_, keys, _)| UnicodeWidthStr::width(*keys))
+            .max()
+            .unwrap_or(0)
+            .max(UnicodeWidthStr::width("Keys"));
+
+        #[allow(clippy::cast_possible_truncation)]
+        let constraints = [
+            Constraint::Length(mode_width as u16 + 1),
+            Constraint::Length(key_width as u16 + 1),
+            Constraint::Min(1),
+        ];
+
+        let rows = HELP_BINDINGS
+            .iter()
+            .map(|(mode, keys, action)| Row::new([*mode, *keys, *action]));
+
+        let table = Table::new(rows, constraints)
+            .header(
+                Row::new(["Mode", "Keys", "Action"])
+                    .style(Style::default().add_modifier(Modifier::BOLD)),
+            )
+            .column_spacing(1);
+        frame.render_widget(table, sections[0]);
+
+        let feedback = Paragraph::new(Text::from(HELP_FEEDBACK_TEXT))
+            .style(Style::default().add_modifier(Modifier::DIM));
+        frame.render_widget(feedback, sections[1]);
     }
 
     fn row_label(&self, item: &RowItem) -> String {

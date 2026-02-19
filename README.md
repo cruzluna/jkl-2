@@ -133,7 +133,9 @@ Each archive should contain the `jkl` binary at the top level.
 ## Usage
 
 - Launch the TUI: `jkl tui`
-- Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search first)
+- Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search/help first)
+- Open keybinding help: `?`
+- In help mode, return to list view: `q`, `Q`, `Esc`, or `Ctrl+C`
 - Navigate rows: `↑`/`↓` or `j`/`k`
 - Expand/collapse session details (windows + panes): `l`/`h`
 - Refresh pane list: `r`
