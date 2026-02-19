@@ -261,6 +261,36 @@ Docs:
 - https://kiro.dev/docs/cli/hooks/
 - https://kiro.dev/docs/cli/custom-agents/configuration-reference/
 
+### Cursor CLI hooks
+
+Cursor hooks are configured in `hooks.json` at either the user level (`~/.cursor/hooks.json`) or the project level (`<project>/.cursor/hooks.json`).
+
+The example below uses Agent hooks to mirror the Kiro behavior: set the current tmux pane to `working` on `beforeSubmitPrompt`, then back to `waiting` on `stop`.
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working"
+      }
+    ],
+    "stop": [
+      {
+        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting"
+      }
+    ]
+  }
+}
+```
+
+If you prefer scripts instead of inline commands, note the path difference from Cursor docs: user hooks run from `~/.cursor/` (for example `./hooks/script.sh`), while project hooks run from the project root (for example `.cursor/hooks/script.sh`).
+
+Docs:
+
+- https://cursor.com/docs/agent/hooks
+
 ### Fig autocomplete
 
 A standalone Fig spec for `jkl` lives at:
