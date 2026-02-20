@@ -142,6 +142,51 @@ pub fn select_pane(target: &str) -> Result<(), io::Error> {
     Ok(())
 }
 
+pub fn kill_session(target: &str) -> Result<(), io::Error> {
+    let output = Command::new("tmux")
+        .args(["kill-session", "-t", target])
+        .output()?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        debug!(
+            "tmux kill-session failed target={} stderr={}",
+            target, message
+        );
+        return Err(io::Error::new(io::ErrorKind::Other, message));
+    }
+    debug!("tmux kill-session target={}", target);
+    Ok(())
+}
+
+pub fn kill_window(target: &str) -> Result<(), io::Error> {
+    let output = Command::new("tmux")
+        .args(["kill-window", "-t", target])
+        .output()?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        debug!(
+            "tmux kill-window failed target={} stderr={}",
+            target, message
+        );
+        return Err(io::Error::new(io::ErrorKind::Other, message));
+    }
+    debug!("tmux kill-window target={}", target);
+    Ok(())
+}
+
+pub fn kill_pane(target: &str) -> Result<(), io::Error> {
+    let output = Command::new("tmux")
+        .args(["kill-pane", "-t", target])
+        .output()?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        debug!("tmux kill-pane failed target={} stderr={}", target, message);
+        return Err(io::Error::new(io::ErrorKind::Other, message));
+    }
+    debug!("tmux kill-pane target={}", target);
+    Ok(())
+}
+
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
