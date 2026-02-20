@@ -17,9 +17,21 @@ pub struct TmuxPane {
     pub pane_id: String,
 }
 
+fn parse_tmux_timestamp(value: Option<&str>) -> u64 {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
 pub fn list_sessions() -> Result<Vec<TmuxSession>, io::Error> {
     let output = Command::new("tmux")
-        .args(["list-sessions", "-F", "#{session_id}\t#{session_name}"])
+        .args([
+            "list-sessions",
+            "-F",
+            "#{session_id}\t#{session_name}\t#{session_last_attached}\t#{session_activity}",
+        ])
         .output()?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -28,24 +40,41 @@ pub fn list_sessions() -> Result<Vec<TmuxSession>, io::Error> {
     let raw_output = String::from_utf8_lossy(&output.stdout);
     debug!("tmux list-sessions raw output:\n{}", raw_output);
 
-    let sessions: Vec<TmuxSession> = raw_output
+    let mut sessions_with_recency: Vec<(TmuxSession, u64)> = raw_output
         .lines()
         .filter_map(|line| {
-            let mut parts = line.splitn(2, '\t');
+            let mut parts = line.splitn(4, '\t');
             let id = parts.next()?.trim();
             let name = parts.next()?.trim();
+            let last_attached = parse_tmux_timestamp(parts.next());
+            let last_activity = parse_tmux_timestamp(parts.next());
             if id.is_empty() || name.is_empty() {
                 debug!("skipping invalid session line: {}", line);
                 None
             } else {
+                let recency = last_attached.max(last_activity);
                 let session = TmuxSession {
                     id: id.to_string(),
                     name: name.to_string(),
                 };
-                debug!("parsed session: {:?}", session);
-                Some(session)
+                debug!(
+                    "parsed session: {:?}, last_attached={}, last_activity={}, recency={}",
+                    session, last_attached, last_activity, recency
+                );
+                Some((session, recency))
             }
         })
+        .collect();
+    sessions_with_recency.sort_by(|(left, left_recency), (right, right_recency)| {
+        right_recency
+            .cmp(left_recency)
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let sessions: Vec<TmuxSession> = sessions_with_recency
+        .into_iter()
+        .map(|(session, _)| session)
         .collect();
     info!("tmux list-sessions returned {} entries", sessions.len());
     Ok(sessions)
@@ -269,6 +298,24 @@ esac
         assert_eq!(sessions[0].name, "one");
         assert_eq!(sessions[1].id, "@2");
         assert_eq!(sessions[1].name, "two");
+    }
+
+    #[test]
+    fn list_sessions_sorts_by_recent_usage_descending() {
+        let mut env = EnvGuard::new("tmux-list-sessions-recent");
+        setup_fake_tmux(&mut env);
+        env.set_var(
+            "TMUX_LIST_SESSIONS",
+            "@1\tone\t100\t100\n@2\ttwo\t200\t10\n@3\tthree\t0\t150\n@4\tfour\t\t\n",
+        );
+        env.remove_var("TMUX_LIST_SESSIONS_EXIT");
+
+        let sessions = list_sessions().expect("list sessions");
+        assert_eq!(sessions.len(), 4);
+        assert_eq!(sessions[0].id, "@2");
+        assert_eq!(sessions[1].id, "@3");
+        assert_eq!(sessions[2].id, "@1");
+        assert_eq!(sessions[3].id, "@4");
     }
 
     #[test]
