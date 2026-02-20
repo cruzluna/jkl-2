@@ -80,6 +80,25 @@ pub fn list_sessions() -> Result<Vec<TmuxSession>, io::Error> {
     Ok(sessions)
 }
 
+pub fn current_session_id() -> Result<String, io::Error> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{session_id}"])
+        .output()?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(io::Error::new(io::ErrorKind::Other, message));
+    }
+    let session_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if session_id.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "tmux returned empty current session id",
+        ));
+    }
+    debug!("tmux current session id={}", session_id);
+    Ok(session_id)
+}
+
 pub fn list_panes() -> Result<Vec<TmuxPane>, io::Error> {
     let output = Command::new("tmux")
         .args([
@@ -254,6 +273,14 @@ case "$1" in
     fi
     exit 0
     ;;
+  display-message)
+    if [ "${TMUX_DISPLAY_MESSAGE_EXIT:-0}" -ne 0 ]; then
+      echo "${TMUX_DISPLAY_MESSAGE_ERR:-error}" 1>&2
+      exit "${TMUX_DISPLAY_MESSAGE_EXIT}"
+    fi
+    printf "%s" "${TMUX_DISPLAY_MESSAGE:-}"
+    exit 0
+    ;;
   select-window)
     if [ "${TMUX_SELECT_WINDOW_FAIL:-0}" -ne 0 ]; then
       echo "${TMUX_SELECT_WINDOW_ERR:-error}" 1>&2
@@ -387,6 +414,41 @@ esac
         env.remove_var("TMUX_SWITCH_FAIL");
 
         switch_client("@1").expect("switch client");
+    }
+
+    #[test]
+    fn current_session_id_parses_output() {
+        let mut env = EnvGuard::new("tmux-current-session-id-ok");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_DISPLAY_MESSAGE", "@42\n");
+        env.remove_var("TMUX_DISPLAY_MESSAGE_EXIT");
+
+        let session_id = current_session_id().expect("current session id");
+        assert_eq!(session_id, "@42");
+    }
+
+    #[test]
+    fn current_session_id_returns_error_on_failure() {
+        let mut env = EnvGuard::new("tmux-current-session-id-error");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_DISPLAY_MESSAGE_EXIT", "1");
+        env.set_var("TMUX_DISPLAY_MESSAGE_ERR", "no current client");
+
+        let err = current_session_id().expect_err("expected error");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "no current client");
+    }
+
+    #[test]
+    fn current_session_id_returns_error_on_empty_output() {
+        let mut env = EnvGuard::new("tmux-current-session-id-empty");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_DISPLAY_MESSAGE", "");
+        env.remove_var("TMUX_DISPLAY_MESSAGE_EXIT");
+
+        let err = current_session_id().expect_err("expected error");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "tmux returned empty current session id");
     }
 
     #[test]

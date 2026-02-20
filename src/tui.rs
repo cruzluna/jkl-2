@@ -32,6 +32,13 @@ pub enum TuiError {
 
 pub fn run() -> Result<(), TuiError> {
     info!("tui starting");
+    let preferred_session_id = crate::tmux::current_session_id().ok();
+    if let Some(session_id) = preferred_session_id.as_ref() {
+        info!("tui current session id={session_id}");
+    } else {
+        debug!("tui current session id unavailable, defaulting selection to first row");
+    }
+
     let sessions =
         crate::tmux::list_sessions().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
     info!(
@@ -50,7 +57,7 @@ pub fn run() -> Result<(), TuiError> {
     let items = build_sessions(sessions, contexts, panes);
     info!("tui built {} session rows", items.len());
 
-    let mut app = App::new(items)?;
+    let mut app = App::new(items, preferred_session_id)?;
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
     ratatui::restore();
@@ -267,8 +274,15 @@ struct App<S: SessionSearch> {
 
 impl App<NucleoSessionSearch> {
     /// Creates a list view of sessions and panes
-    fn new(sessions: Vec<SessionRow>) -> Result<Self, TuiError> {
-        Self::new_with_filter(sessions, NucleoSessionSearch::new())
+    fn new(
+        sessions: Vec<SessionRow>,
+        preferred_session_id: Option<String>,
+    ) -> Result<Self, TuiError> {
+        Self::new_with_filter_and_preferred_session(
+            sessions,
+            preferred_session_id,
+            NucleoSessionSearch::new(),
+        )
     }
 }
 
@@ -277,6 +291,14 @@ impl<S: SessionSearch> App<S> {
     ///
     /// This keeps search behavior testable without heap allocation or dynamic dispatch.
     fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
+        Self::new_with_filter_and_preferred_session(sessions, None, filter)
+    }
+
+    fn new_with_filter_and_preferred_session(
+        sessions: Vec<SessionRow>,
+        preferred_session_id: Option<String>,
+        filter: S,
+    ) -> Result<Self, TuiError> {
         let mut app = Self {
             state: TableState::default(),
             filtered_sessions: sessions.clone(),
@@ -295,6 +317,7 @@ impl<S: SessionSearch> App<S> {
             filter,
         };
         app.rebuild_rows();
+        app.select_preferred_session(preferred_session_id.as_deref());
         app.ensure_selection();
         Ok(app)
     }
@@ -410,6 +433,20 @@ impl<S: SessionSearch> App<S> {
             self.state.select(None);
         } else if self.state.selected().is_none() {
             self.state.select(Some(0));
+        }
+    }
+
+    fn select_preferred_session(&mut self, preferred_session_id: Option<&str>) {
+        let Some(preferred_session_id) = preferred_session_id else {
+            return;
+        };
+        if let Some(index) = self.rows.iter().position(|row| {
+            matches!(
+                row,
+                RowItem::Session(session) if session.id == preferred_session_id
+            )
+        }) {
+            self.state.select(Some(index));
         }
     }
 
@@ -1530,6 +1567,40 @@ esac
             .filter_ids("gma", &candidates)
             .expect("nucleo fuzzy search");
         assert_eq!(matches, vec!["@3".to_string()]);
+    }
+
+    #[test]
+    fn new_with_preferred_session_selects_matching_session() {
+        let sessions = vec![session_row("@1", "alpha"), session_row("@2", "beta")];
+        let app = App::new_with_filter_and_preferred_session(
+            sessions,
+            Some("@2".to_string()),
+            passthrough_filter(),
+        )
+        .expect("app");
+
+        let selected = app.selected_row().expect("selected row");
+        match selected {
+            RowItem::Session(row) => assert_eq!(row.id, "@2"),
+            RowItem::Window(_) | RowItem::Pane(_) => panic!("expected session row"),
+        }
+    }
+
+    #[test]
+    fn new_with_preferred_session_falls_back_to_first_row() {
+        let sessions = vec![session_row("@1", "alpha"), session_row("@2", "beta")];
+        let app = App::new_with_filter_and_preferred_session(
+            sessions,
+            Some("@404".to_string()),
+            passthrough_filter(),
+        )
+        .expect("app");
+
+        let selected = app.selected_row().expect("selected row");
+        match selected {
+            RowItem::Session(row) => assert_eq!(row.id, "@1"),
+            RowItem::Window(_) | RowItem::Pane(_) => panic!("expected session row"),
+        }
     }
 
     #[test]
