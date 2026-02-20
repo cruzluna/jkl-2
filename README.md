@@ -21,7 +21,7 @@
 curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/install.sh | bash
 ```
 
-Optional: set `JKL_INSTALL_DIR` to choose where binaries/scripts are installed.
+Optional: set `JKL_INSTALL_DIR` to choose where binaries are installed.
 On Linux, the installer picks:
 
 - `*-unknown-linux-musl` on Alpine
@@ -31,12 +31,6 @@ On Linux, the installer picks:
 The installer adds:
 
 - `jkl`
-- `jkl-sync-fig-autocomplete` (if you answer `y` to the install prompt)
-
-To force this in non-interactive installs, set:
-
-- `JKL_INSTALL_FIG_COMPLETIONS=1` to install
-- `JKL_INSTALL_FIG_COMPLETIONS=0` to skip
 
 ### Release Asset (manual)
 
@@ -69,21 +63,21 @@ If needed, ensure `~/.cargo/bin` is on your `PATH`.
 
 ```
 jkl update
-jkl-sync-fig-autocomplete
+jkl init fig-autocomplete
 ```
 
 To include pre-releases:
 
 ```
 jkl update --pre-release
-jkl-sync-fig-autocomplete
+jkl init fig-autocomplete
 ```
 
 To include dev preview builds from the `dev` branch:
 
 ```
 jkl update --pre-release --dev
-jkl-sync-fig-autocomplete
+jkl init fig-autocomplete
 ```
 
 Master pre-releases are selected from tags that include `-rc.` (for example, `v0.2.0-rc.1`).
@@ -99,7 +93,7 @@ cargo install --git https://github.com/cruzluna/jkl-2 --force
 Then refresh Fig autocomplete:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/scripts/sync-fig-autocomplete.sh | bash
+jkl init fig-autocomplete
 ```
 
 ## Uninstall
@@ -147,6 +141,10 @@ Each archive should contain the `jkl` binary at the top level.
 - Update from stable channel: `jkl update`
 - Update from master pre-release channel: `jkl update --pre-release`
 - Update from dev preview channel: `jkl update --pre-release --dev`
+- Interactive integration setup: `jkl init`
+- Non-interactive hooks setup: `jkl init hooks --tool <claude|cursor|kiro> --scope <local|global> --non-interactive [--agent-config-dir <dir> (kiro only)] [--agent-config <path...> (kiro/cursor)]`
+- Non-interactive skills setup: `jkl init skills --tool <codex|claude|kiro> --scope <local|global> --non-interactive`
+- Refresh Fig autocomplete: `jkl init fig-autocomplete`
 - Uninstall binary from current location: `jkl uninstall [--purge-data]`
 - Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
 
@@ -200,6 +198,12 @@ set -g @jkl_force_bind_keys 'on'
 
 Claude Code hooks can be configured in `~/.claude/settings.json` (user), `.claude/settings.json` (project), or `.claude/settings.local.json` (local project). The example below marks the current tmux pane as `working` when you submit a prompt, and `waiting` when Claude stops.
 
+Initialize automatically:
+
+```
+jkl init hooks --tool claude --scope global --non-interactive
+```
+
 ```json
 {
   "hooks": {
@@ -236,6 +240,31 @@ Docs:
 
 Kiro CLI hooks are defined in an agent config file (for example `.kiro/agents/jkl.json` in a project, or `~/.kiro/agents/jkl.json` globally). The same pattern can be applied with `userPromptSubmit` and `stop` hooks:
 
+Initialize automatically:
+
+```
+jkl init hooks --tool kiro --scope local --non-interactive
+```
+
+To target specific Kiro agent config files:
+
+```
+jkl init hooks --tool kiro --scope local --non-interactive --agent-config .kiro/agents/dev.json .kiro/agents/reviewer.json
+```
+
+To use a different Kiro agents directory:
+
+```
+jkl init hooks --tool kiro --scope local --non-interactive --agent-config-dir ./custom/kiro/agents
+```
+
+Kiro hooks targeting behavior:
+
+- `--agent-config` updates exactly the listed files (best for automation).
+- `--agent-config-dir` chooses which directory the interactive selector scans.
+- `--agent-config-dir` alone does not update every file automatically.
+- In non-interactive mode, if `--agent-config` is omitted, jkl targets `<agent-config-dir>/jkl.json`.
+
 ```json
 {
   "name": "jkl",
@@ -268,6 +297,23 @@ Cursor hooks are configured in `hooks.json` at either the user level (`~/.cursor
 
 The example below uses Agent hooks to mirror the Kiro behavior: set the current tmux pane to `working` on `beforeSubmitPrompt`, then back to `waiting` on `stop`.
 
+Initialize automatically:
+
+```
+jkl init hooks --tool cursor --scope local --non-interactive
+```
+
+To target specific Cursor hook config files:
+
+```
+jkl init hooks --tool cursor --scope local --non-interactive --agent-config .cursor/hooks.json ./custom/cursor/hooks.json
+```
+
+Cursor hooks targeting behavior:
+
+- `--agent-config` updates exactly the listed files.
+- In non-interactive mode, if `--agent-config` is omitted, jkl targets the default path from `--scope` (`<project>/.cursor/hooks.json` or `~/.cursor/hooks.json`).
+
 ```json
 {
   "version": 1,
@@ -292,30 +338,29 @@ Docs:
 
 - https://cursor.com/docs/agent/hooks
 
+### Skills
+
+Initialize skills with `jkl init` interactively, or use non-interactive mode:
+
+```
+jkl init skills --tool codex --scope local --non-interactive
+```
+
+Codex skill paths:
+
+- local: `.agents/skills`
+- global: `~/.agents/skills`
+
 ### Fig autocomplete
 
 A standalone Fig spec for `jkl` lives at:
 
 - `completions/fig/jkl.ts`
 
-User sync script:
-
-- `scripts/sync-fig-autocomplete.sh`
-
-Installed binary helper (from `install.sh`):
-
-- `jkl-sync-fig-autocomplete`
-
-Run either:
+Refresh autocomplete with:
 
 ```
-jkl-sync-fig-autocomplete
-```
-
-or:
-
-```
-curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/scripts/sync-fig-autocomplete.sh | bash
+jkl init fig-autocomplete
 ```
 
 ## Session Context

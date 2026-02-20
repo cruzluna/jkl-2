@@ -1,5 +1,6 @@
 mod cli;
 mod context;
+mod init;
 #[cfg(test)]
 mod test_utils;
 mod tmux;
