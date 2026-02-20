@@ -181,8 +181,8 @@ Some keys may already be used by tmux defaults (for example `prefix + f` runs `f
 # 1) Unbind manually before the plugin is loaded
 unbind-key -T prefix f
 
-# 2) Let jkl unbind conflicting prefix keys before binding
-set -g @jkl_unbind_keys 'on'
+# 2) Let jkl unbind only the conflicting key before binding
+set -g @jkl_unbind_key_tui 'on'
 
 # 3) Use a different key
 set -g @jkl_key_tui 'J'
@@ -200,6 +200,9 @@ set -g @jkl_key_pane_state 'P'
 # Disable a binding
 set -g @jkl_key_edit 'none'
 ```
+
+Per-key unbind options:
+`@jkl_unbind_key_tui`, `@jkl_unbind_key_context`, `@jkl_unbind_key_edit`, `@jkl_unbind_key_pane_state`.
 
 By default the plugin does not override existing tmux/user bindings. If you want it to force overrides without unbinding first, set:
 

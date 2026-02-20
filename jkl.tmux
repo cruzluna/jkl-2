@@ -15,7 +15,8 @@ get_tmux_option() {
 bind_prefix_key() {
   local option_name="$1"
   local default_key="$2"
-  shift 2
+  local unbind_option_name="$3"
+  shift 3
 
   local key
   key="$(get_tmux_option "$option_name" "$default_key")"
@@ -27,11 +28,11 @@ bind_prefix_key() {
 
   local force_bind
   force_bind="$(get_tmux_option "@jkl_force_bind_keys" "off")"
-  local unbind_keys
-  unbind_keys="$(get_tmux_option "@jkl_unbind_keys" "off")"
+  local unbind_key
+  unbind_key="$(get_tmux_option "$unbind_option_name" "off")"
 
-  # Optionally unbind prefix keys before applying jkl bindings.
-  if [ "$unbind_keys" = "on" ]; then
+  # Optionally unbind this prefix key before applying the jkl binding.
+  if [ "$unbind_key" = "on" ]; then
     tmux unbind-key -T prefix "$key" >/dev/null 2>&1 || true
   fi
 
@@ -43,9 +44,9 @@ bind_prefix_key() {
   tmux bind-key "$key" "$@"
 }
 
-bind_prefix_key "@jkl_key_tui" "f" display-popup -E -w 40% -h 40% "jkl tui"
-bind_prefix_key "@jkl_key_context" "W" command-prompt -p "Context for #S:" "run-shell \"jkl upsert '#S' --session-id '#{session_id}' --context '%%'\""
-bind_prefix_key "@jkl_key_edit" "e" display-popup -E -w 40% -h 40% "nvim ~/.config/jkl/session_context.json"
-bind_prefix_key "@jkl_key_pane_state" "S" run-shell 'tmux display-popup -E -w 30% -h 30% "jkl tui --pane-state --session-name \"#{session_name}\" --pane-id \"#{pane_id}\""'
+bind_prefix_key "@jkl_key_tui" "f" "@jkl_unbind_key_tui" display-popup -E -w 40% -h 40% "jkl tui"
+bind_prefix_key "@jkl_key_context" "W" "@jkl_unbind_key_context" command-prompt -p "Context for #S:" "run-shell \"jkl upsert '#S' --session-id '#{session_id}' --context '%%'\""
+bind_prefix_key "@jkl_key_edit" "e" "@jkl_unbind_key_edit" display-popup -E -w 40% -h 40% "nvim ~/.config/jkl/session_context.json"
+bind_prefix_key "@jkl_key_pane_state" "S" "@jkl_unbind_key_pane_state" run-shell 'tmux display-popup -E -w 30% -h 30% "jkl tui --pane-state --session-name \"#{session_name}\" --pane-id \"#{pane_id}\""'
 
 tmux set-hook -g session-renamed "run-shell \"jkl rename '#{hook_session}' '#{hook_session_name}'\""
