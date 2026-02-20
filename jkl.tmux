@@ -27,6 +27,13 @@ bind_prefix_key() {
 
   local force_bind
   force_bind="$(get_tmux_option "@jkl_force_bind_keys" "off")"
+  local unbind_keys
+  unbind_keys="$(get_tmux_option "@jkl_unbind_keys" "off")"
+
+  # Optionally unbind prefix keys before applying jkl bindings.
+  if [ "$unbind_keys" = "on" ]; then
+    tmux unbind-key -T prefix "$key" >/dev/null 2>&1 || true
+  fi
 
   # Avoid overriding existing user/default tmux keybindings unless explicitly requested.
   if [ "$force_bind" != "on" ] && tmux list-keys -T prefix "$key" >/dev/null 2>&1; then

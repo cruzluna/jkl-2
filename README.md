@@ -175,7 +175,20 @@ Default prefix bindings (only set when the key is currently unbound):
 - `e`: open `~/.config/jkl/session_context.json` in `nvim`
 - `S`: open pane status selector popup
 
-You can configure or disable each key:
+Some keys may already be used by tmux defaults (for example `prefix + f` runs `find-window`). If a key conflicts, use one of these:
+
+```tmux
+# 1) Unbind manually before the plugin is loaded
+unbind-key -T prefix f
+
+# 2) Let jkl unbind conflicting prefix keys before binding
+set -g @jkl_unbind_keys 'on'
+
+# 3) Use a different key
+set -g @jkl_key_tui 'J'
+```
+
+You can configure or disable each binding:
 
 ```tmux
 # Set custom keys
@@ -188,7 +201,7 @@ set -g @jkl_key_pane_state 'P'
 set -g @jkl_key_edit 'none'
 ```
 
-By default the plugin does not override existing tmux/user bindings. If you want it to force overrides, set:
+By default the plugin does not override existing tmux/user bindings. If you want it to force overrides without unbinding first, set:
 
 ```tmux
 set -g @jkl_force_bind_keys 'on'
