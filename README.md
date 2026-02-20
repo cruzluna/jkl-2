@@ -141,7 +141,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Update from master pre-release channel: `jkl update --pre-release`
 - Update from dev preview channel: `jkl update --pre-release --dev`
 - Interactive integration setup: `jkl init`
-- Non-interactive hooks setup: `jkl init hooks --tool <claude|kiro> --scope <local|global> --non-interactive [--agent-config-dir <dir>] [--agent-config <path...>]`
+- Non-interactive hooks setup: `jkl init hooks --tool <claude|cursor|kiro> --scope <local|global> --non-interactive [--agent-config-dir <dir> (kiro only)] [--agent-config <path...> (kiro/cursor)]`
 - Non-interactive skills setup: `jkl init skills --tool <codex|claude|kiro> --scope <local|global> --non-interactive`
 - Refresh Fig autocomplete: `jkl init fig-autocomplete`
 - Uninstall binary from current location: `jkl uninstall [--purge-data]`
@@ -290,6 +290,52 @@ Docs:
 - https://kiro.dev/docs/cli/hooks/
 - https://kiro.dev/docs/cli/custom-agents/configuration-reference/
 
+### Cursor CLI hooks
+
+Cursor hooks are configured in `hooks.json` at either the user level (`~/.cursor/hooks.json`) or the project level (`<project>/.cursor/hooks.json`).
+
+The example below uses Agent hooks to mirror the Kiro behavior: set the current tmux pane to `working` on `beforeSubmitPrompt`, then back to `waiting` on `stop`.
+
+Initialize automatically:
+
+```
+jkl init hooks --tool cursor --scope local --non-interactive
+```
+
+To target specific Cursor hook config files:
+
+```
+jkl init hooks --tool cursor --scope local --non-interactive --agent-config .cursor/hooks.json ./custom/cursor/hooks.json
+```
+
+Cursor hooks targeting behavior:
+
+- `--agent-config` updates exactly the listed files.
+- In non-interactive mode, if `--agent-config` is omitted, jkl targets the default path from `--scope` (`<project>/.cursor/hooks.json` or `~/.cursor/hooks.json`).
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working"
+      }
+    ],
+    "stop": [
+      {
+        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting"
+      }
+    ]
+  }
+}
+```
+
+If you prefer scripts instead of inline commands, note the path difference from Cursor docs: user hooks run from `~/.cursor/` (for example `./hooks/script.sh`), while project hooks run from the project root (for example `.cursor/hooks/script.sh`).
+
+Docs:
+
+- https://cursor.com/docs/agent/hooks
 ### Skills
 
 Initialize skills with `jkl init` interactively, or use non-interactive mode:

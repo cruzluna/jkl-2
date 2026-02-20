@@ -7,6 +7,7 @@ const statusSuggestions: Fig.Suggestion[] = [
 
 const initToolHooksSuggestions: Fig.Suggestion[] = [
   { name: "claude", description: "Initialize Claude Code hooks" },
+  { name: "cursor", description: "Initialize Cursor hooks" },
   { name: "kiro", description: "Initialize Kiro CLI hooks" },
 ];
 
@@ -230,7 +231,7 @@ const completionSpec: Fig.Spec = {
       subcommands: [
         {
           name: "hooks",
-          description: "Initialize Claude or Kiro hooks",
+          description: "Initialize Claude, Cursor, or Kiro hooks",
           options: [
             {
               name: "--tool",
@@ -259,7 +260,7 @@ const completionSpec: Fig.Spec = {
             {
               name: "--agent-config",
               description:
-                "Explicit Kiro agent config file path(s) to update",
+                "Explicit hook config file path(s) to update (Kiro or Cursor)",
               args: {
                 name: "path",
                 isVariadic: true,
