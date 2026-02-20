@@ -154,28 +154,40 @@ Multi-word session names or context can be passed without quotes; use `--` to te
 
 ## Tmux Plugin (TPM)
 
-Add the plugin and reload TPM:
+### Install
 
-```
+```tmux
+# Put @jkl_* options before TPM initialization.
 set -g @plugin 'cruzluna/jkl-2'
 
-# Initialize TMUX plugin manager (keep at bottom)
+# Initialize TPM (keep at bottom)
 run '~/.tmux/plugins/tpm/tpm'
 ```
 
-If tpm fails to download plugin: 
-``` bash
-$ tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
+Reload tmux config:
+
+```bash
+tmux source-file ~/.tmux.conf
 ```
 
-Default prefix bindings (only set when the key is currently unbound):
+If TPM fails to download the plugin:
 
-- `f`: open `jkl tui` in a popup
-- `W`: prompt for context and run `jkl upsert '#S' --session-id '#{session_id}' --context <input>`
-- `e`: open `~/.config/jkl/session_context.json` in `nvim`
-- `S`: open pane status selector popup
+```bash
+tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
+```
 
-Some keys may already be used by tmux defaults (for example `prefix + f` runs `find-window`). If a key conflicts, use one of these:
+### Default prefix bindings
+
+By default, jkl only binds a key when that key is currently unbound.
+
+- `prefix + f`: open `jkl tui` in a popup
+- `prefix + W`: prompt for context and run `jkl upsert '#S' --session-id '#{session_id}' --context <input>`
+- `prefix + e`: open `~/.config/jkl/session_context.json` in `nvim`
+- `prefix + S`: open pane status selector popup
+
+### Key conflicts (for example `prefix + f` / `find-window`)
+
+If a key is already bound, choose one of these:
 
 ```tmux
 # 1) Unbind manually before the plugin is loaded
@@ -188,23 +200,27 @@ set -g @jkl_unbind_key_tui 'on'
 set -g @jkl_key_tui 'J'
 ```
 
-You can configure or disable each binding:
+### Binding options
+
+Set custom keys, or disable a binding with `none` (or an empty value):
 
 ```tmux
-# Set custom keys
 set -g @jkl_key_tui 'J'
 set -g @jkl_key_context 'C'
 set -g @jkl_key_edit 'E'
 set -g @jkl_key_pane_state 'P'
 
-# Disable a binding
+# Disable one binding
 set -g @jkl_key_edit 'none'
 ```
 
-Per-key unbind options:
-`@jkl_unbind_key_tui`, `@jkl_unbind_key_context`, `@jkl_unbind_key_edit`, `@jkl_unbind_key_pane_state`.
+Per-key unbind toggles (default `off`):
+- `@jkl_unbind_key_tui`
+- `@jkl_unbind_key_context`
+- `@jkl_unbind_key_edit`
+- `@jkl_unbind_key_pane_state`
 
-By default the plugin does not override existing tmux/user bindings. If you want it to force overrides without unbinding first, set:
+Advanced: force jkl to override existing bindings without unbinding first:
 
 ```tmux
 set -g @jkl_force_bind_keys 'on'
