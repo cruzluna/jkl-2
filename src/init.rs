@@ -12,6 +12,8 @@ const CLAUDE_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$
 const CLAUDE_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
 const KIRO_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
 const KIRO_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
+const CURSOR_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
+const CURSOR_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
 
 const KIRO_NAME: &str = "jkl";
 const KIRO_DESCRIPTION: &str = "Sync jkl status with Kiro activity";
@@ -23,6 +25,7 @@ const FIG_SPEC: &str = include_str!("../completions/fig/jkl.ts");
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum InitTool {
     Claude,
+    Cursor,
     Kiro,
     Codex,
 }
@@ -32,6 +35,7 @@ impl fmt::Display for InitTool {
         match self {
             Self::Kiro => write!(f, "kiro"),
             Self::Claude => write!(f, "claude"),
+            Self::Cursor => write!(f, "cursor"),
             Self::Codex => write!(f, "codex"),
         }
     }
@@ -100,7 +104,7 @@ pub fn run_hooks(
     let tool = resolve_tool(
         tool,
         non_interactive,
-        &[InitTool::Claude, InitTool::Kiro],
+        &[InitTool::Claude, InitTool::Cursor, InitTool::Kiro],
         "Select the tool to initialize hooks for:",
         "--tool is required when using --non-interactive",
     )?;
@@ -109,10 +113,10 @@ pub fn run_hooks(
     match tool {
         InitTool::Claude => {
             if config_paths.is_some() {
-                bail!("--config is only supported for --tool kiro");
+                bail!("--agent-config is only supported for --tool kiro or cursor");
             }
             if agents_dir.is_some() {
-                bail!("--agents-dir is only supported for --tool kiro");
+                bail!("--agent-config-dir is only supported for --tool kiro");
             }
             let path = hooks_config_path(tool, scope)?;
             apply_hooks_to_file(&path, tool)?;
@@ -123,6 +127,15 @@ pub fn run_hooks(
                 println!("No Kiro agent configs selected. No files updated.");
                 return Ok(());
             }
+            for path in paths {
+                apply_hooks_to_file(&path, tool)?;
+            }
+        }
+        InitTool::Cursor => {
+            if agents_dir.is_some() {
+                bail!("--agent-config-dir is only supported for --tool kiro");
+            }
+            let paths = resolve_cursor_hook_paths(scope, config_paths)?;
             for path in paths {
                 apply_hooks_to_file(&path, tool)?;
             }
@@ -242,6 +255,7 @@ fn apply_hooks_to_file(path: &Path, tool: InitTool) -> Result<()> {
     let mut root = load_json_object_or_empty(path)?;
     let changed = match tool {
         InitTool::Claude => ensure_claude_hooks(&mut root)?,
+        InitTool::Cursor => ensure_cursor_hooks(&mut root)?,
         InitTool::Kiro => ensure_kiro_hooks(&mut root)?,
         InitTool::Codex => bail!("codex does not support hooks"),
     };
@@ -264,6 +278,10 @@ fn hooks_config_path(tool: InitTool, scope: InitScope) -> Result<PathBuf> {
         (InitTool::Claude, InitScope::Local) => std::env::current_dir()?
             .join(".claude")
             .join("settings.local.json"),
+        (InitTool::Cursor, InitScope::Global) => home.join(".cursor").join("hooks.json"),
+        (InitTool::Cursor, InitScope::Local) => {
+            std::env::current_dir()?.join(".cursor").join("hooks.json")
+        }
         (InitTool::Kiro, InitScope::Global) => home.join(".kiro").join("agents").join("jkl.json"),
         (InitTool::Kiro, InitScope::Local) => std::env::current_dir()?
             .join(".kiro")
@@ -309,6 +327,17 @@ fn resolve_kiro_hook_paths(
     }
 
     select_kiro_configs_with_enter(detected)
+}
+
+fn resolve_cursor_hook_paths(
+    scope: InitScope,
+    config_paths: Option<Vec<PathBuf>>,
+) -> Result<Vec<PathBuf>> {
+    if let Some(paths) = config_paths {
+        return normalize_user_paths(paths);
+    }
+
+    Ok(vec![hooks_config_path(InitTool::Cursor, scope)?])
 }
 
 fn discover_kiro_agent_configs(agents_dir: &Path) -> Result<Vec<PathChoice>> {
@@ -451,6 +480,7 @@ fn skills_root_path(tool: InitTool, scope: InitScope) -> Result<PathBuf> {
         (InitTool::Codex, InitScope::Global) => home.join(".agents").join("skills"),
         (InitTool::Claude, InitScope::Local) => cwd.join(".claude").join("skills"),
         (InitTool::Claude, InitScope::Global) => home.join(".claude").join("skills"),
+        (InitTool::Cursor, _) => bail!("cursor does not support skills"),
         (InitTool::Kiro, InitScope::Local) => cwd.join(".kiro").join("skills"),
         (InitTool::Kiro, InitScope::Global) => home.join(".kiro").join("skills"),
     })
@@ -558,6 +588,41 @@ fn ensure_kiro_hooks(root: &mut Value) -> Result<bool> {
 }
 
 fn ensure_kiro_hook_event(
+    hooks: &mut Map<String, Value>,
+    event: &str,
+    command: &str,
+) -> Result<bool> {
+    let event_entries = array_field(hooks, event)?;
+
+    if event_entries
+        .iter()
+        .any(|entry| entry.get("command").and_then(Value::as_str) == Some(command))
+    {
+        return Ok(false);
+    }
+
+    event_entries.push(json!({ "command": command }));
+    Ok(true)
+}
+
+fn ensure_cursor_hooks(root: &mut Value) -> Result<bool> {
+    let root_obj = root
+        .as_object_mut()
+        .context("cursor config root must be a JSON object")?;
+
+    let mut changed = false;
+    if !root_obj.contains_key("version") {
+        root_obj.insert("version".to_string(), json!(1));
+        changed = true;
+    }
+
+    let hooks = object_field(root_obj, "hooks")?;
+    changed |= ensure_cursor_hook_event(hooks, "beforeSubmitPrompt", CURSOR_WORKING_COMMAND)?;
+    changed |= ensure_cursor_hook_event(hooks, "stop", CURSOR_WAITING_COMMAND)?;
+    Ok(changed)
+}
+
+fn ensure_cursor_hook_event(
     hooks: &mut Map<String, Value>,
     event: &str,
     command: &str,
@@ -733,6 +798,30 @@ mod tests {
     }
 
     #[test]
+    fn hooks_path_for_cursor_resolves_global_and_local() {
+        let mut env = EnvGuard::new("init-hooks-cursor-paths");
+        let home = env.set_temp_home();
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+        let previous_cwd = std::env::current_dir().expect("current cwd");
+        struct CwdGuard(PathBuf);
+        impl Drop for CwdGuard {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+        let _cwd_guard = CwdGuard(previous_cwd);
+        std::env::set_current_dir(&cwd).expect("set cwd");
+
+        let global = hooks_config_path(InitTool::Cursor, InitScope::Global).expect("global path");
+        let local = hooks_config_path(InitTool::Cursor, InitScope::Local).expect("local path");
+
+        assert_eq!(global, home.join(".cursor").join("hooks.json"));
+        let cwd_resolved = std::env::current_dir().expect("resolved cwd");
+        assert_eq!(local, cwd_resolved.join(".cursor").join("hooks.json"));
+    }
+
+    #[test]
     fn ensure_claude_hooks_is_idempotent() {
         let mut root = json!({});
 
@@ -772,6 +861,33 @@ mod tests {
             .and_then(Value::as_array)
             .expect("stop array");
         assert_eq!(stop.len(), 1);
+    }
+
+    #[test]
+    fn ensure_cursor_hooks_is_idempotent() {
+        let mut root = json!({});
+
+        let first = ensure_cursor_hooks(&mut root).expect("first ensure");
+        let second = ensure_cursor_hooks(&mut root).expect("second ensure");
+
+        assert!(first);
+        assert!(!second);
+
+        let version = root
+            .get("version")
+            .and_then(Value::as_i64)
+            .expect("version");
+        assert_eq!(version, 1);
+
+        let hooks = root
+            .get("hooks")
+            .and_then(Value::as_object)
+            .expect("hooks object");
+        let submit = hooks
+            .get("beforeSubmitPrompt")
+            .and_then(Value::as_array)
+            .expect("beforeSubmitPrompt array");
+        assert_eq!(submit.len(), 1);
     }
 
     #[test]
@@ -825,5 +941,17 @@ mod tests {
             resolve_kiro_hook_paths(InitScope::Local, Some(override_dir.clone()), None, true)
                 .expect("resolve paths");
         assert_eq!(paths, vec![override_dir.join("jkl.json")]);
+    }
+
+    #[test]
+    fn resolve_cursor_hook_paths_uses_explicit_paths() {
+        let env = EnvGuard::new("init-cursor-path-override");
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+        let explicit = cwd.join(".cursor").join("dev-hooks.json");
+
+        let resolved = resolve_cursor_hook_paths(InitScope::Local, Some(vec![explicit.clone()]))
+            .expect("resolve cursor paths");
+        assert_eq!(resolved, vec![explicit]);
     }
 }
