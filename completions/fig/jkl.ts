@@ -6,9 +6,9 @@ const statusSuggestions: Fig.Suggestion[] = [
 ];
 
 const initToolHooksSuggestions: Fig.Suggestion[] = [
-  { name: "claude", description: "Initialize Claude Code hooks" },
-  { name: "cursor", description: "Initialize Cursor hooks" },
   { name: "kiro", description: "Initialize Kiro CLI hooks" },
+  { name: "cursor", description: "Initialize Cursor hooks" },
+  { name: "claude", description: "Initialize Claude Code hooks" },
 ];
 
 const initToolSkillsSuggestions: Fig.Suggestion[] = [
@@ -255,6 +255,7 @@ const completionSpec: Fig.Spec = {
                 "Directory to scan for Kiro agent config files during selection (does not update all files automatically)",
               args: {
                 name: "dir",
+                template: "folders",
               },
             },
             {
@@ -264,6 +265,7 @@ const completionSpec: Fig.Spec = {
               args: {
                 name: "path",
                 isVariadic: true,
+                template: "filepaths",
               },
             },
             {

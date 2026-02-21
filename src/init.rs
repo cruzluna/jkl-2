@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
-use inquire::{Select, Text};
+use inquire::autocompletion::{Autocomplete, Replacement};
+use inquire::{CustomUserError, Select, Text};
 use serde_json::{Map, Value, json};
 use std::fmt;
 use std::fs;
@@ -21,6 +22,7 @@ const KIRO_DESCRIPTION: &str = "Sync jkl status with Kiro activity";
 const JKL_SKILL_MD: &str = include_str!("../skills/jkl-cli/SKILL.md");
 const JKL_SKILL_OPENAI_YAML: &str = include_str!("../skills/jkl-cli/agents/openai.yaml");
 const FIG_SPEC: &str = include_str!("../completions/fig/jkl.ts");
+const FINISH_SELECTION_OPTION: &str = "[Done] Apply selected files";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum InitTool {
@@ -104,7 +106,7 @@ pub fn run_hooks(
     let tool = resolve_tool(
         tool,
         non_interactive,
-        &[InitTool::Claude, InitTool::Cursor, InitTool::Kiro],
+        &[InitTool::Kiro, InitTool::Cursor, InitTool::Claude],
         "Select the tool to initialize hooks for:",
         "--tool is required when using --non-interactive",
     )?;
@@ -253,6 +255,7 @@ fn resolve_scope(scope: Option<InitScope>, non_interactive: bool) -> Result<Init
 fn apply_hooks_to_file(path: &Path, tool: InitTool) -> Result<()> {
     let existed_before = path.exists();
     let mut root = load_json_object_or_empty(path)?;
+    let before_root = root.clone();
     let changed = match tool {
         InitTool::Claude => ensure_claude_hooks(&mut root)?,
         InitTool::Cursor => ensure_cursor_hooks(&mut root)?,
@@ -261,6 +264,7 @@ fn apply_hooks_to_file(path: &Path, tool: InitTool) -> Result<()> {
     };
 
     if changed || !existed_before {
+        print_compact_json_diff(path, &before_root, &root)?;
         write_json_pretty(path, &root)?;
         println!("Initialized hooks at {}", path.display());
     } else {
@@ -309,7 +313,7 @@ fn resolve_kiro_hook_paths(
     if let Some(paths) = config_paths {
         let normalized = normalize_user_paths(paths)?;
         if normalized.is_empty() {
-            bail!("at least one --config path is required");
+            bail!("at least one --agent-config path is required");
         }
         return Ok(normalized);
     }
@@ -375,26 +379,32 @@ fn select_kiro_configs_with_enter(detected: Vec<PathChoice>) -> Result<Vec<PathB
     let mut selected = Vec::new();
 
     loop {
-        let mut options: Vec<String> = remaining
-            .iter()
-            .map(|choice| choice.label.clone())
-            .collect();
-        options.push("Finish selection".to_string());
+        let mut options = vec![FINISH_SELECTION_OPTION.to_string()];
+        options.extend(remaining.iter().map(|choice| choice.label.clone()));
 
-        let prompt = format!(
-            "Select Kiro agent config file (selected: {}, Enter to choose):",
-            selected.len()
-        );
+        let prompt = if selected.is_empty() {
+            format!(
+                "Select Kiro config file to queue, then choose '{}' when finished:",
+                FINISH_SELECTION_OPTION
+            )
+        } else {
+            format!(
+                "Select another file or '{}' to apply {} selected file(s):",
+                FINISH_SELECTION_OPTION,
+                selected.len()
+            )
+        };
         let picked = Select::new(prompt.as_str(), options)
             .prompt()
             .context("prompt for Kiro config file selection")?;
 
-        if picked == "Finish selection" {
+        if picked == FINISH_SELECTION_OPTION {
             break;
         }
 
         if let Some(index) = remaining.iter().position(|choice| choice.label == picked) {
             let choice = remaining.remove(index);
+            println!("Queued {}", choice.path.display());
             selected.push(choice.path);
         }
 
@@ -425,7 +435,8 @@ fn resolve_kiro_agents_dir(
         "Agent config directory [{}]:",
         default_dir.display()
     ))
-    .with_help_message("specify override")
+    .with_help_message("Tab completes paths. Leave empty to use the default directory.")
+    .with_autocomplete(PathInputAutocomplete::default())
     .prompt()
     .context("prompt for Kiro agents directory")?;
 
@@ -442,10 +453,12 @@ fn absolutize_path(path: PathBuf) -> Result<PathBuf> {
 }
 
 fn absolutize_from(path: PathBuf, cwd: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let expanded = expand_tilde_with_home(path, home.as_deref());
+    if expanded.is_absolute() {
+        expanded
     } else {
-        cwd.join(path)
+        cwd.join(expanded)
     }
 }
 
@@ -466,9 +479,27 @@ fn normalize_user_paths_from(paths: Vec<PathBuf>, cwd: &Path) -> Result<Vec<Path
         }
     }
     if normalized.is_empty() {
-        bail!("at least one config path is required");
+        bail!("at least one --agent-config path is required");
     }
     Ok(normalized)
+}
+
+fn expand_tilde_with_home(path: PathBuf, home: Option<&Path>) -> PathBuf {
+    let Some(home) = home else {
+        return path;
+    };
+    let Some(raw) = path.to_str() else {
+        return path;
+    };
+
+    if raw == "~" {
+        return home.to_path_buf();
+    }
+    if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        return home.join(rest);
+    }
+
+    path
 }
 
 fn skills_root_path(tool: InitTool, scope: InitScope) -> Result<PathBuf> {
@@ -516,6 +547,55 @@ fn write_json_pretty(path: &Path, value: &Value) -> Result<()> {
     let serialized = serde_json::to_string_pretty(value).context("serialize JSON config")?;
     fs::write(path, format!("{serialized}\n"))
         .with_context(|| format!("write JSON config at {}", path.display()))
+}
+
+fn print_compact_json_diff(path: &Path, before: &Value, after: &Value) -> Result<()> {
+    let before_serialized = serde_json::to_string_pretty(before).context("serialize old JSON")?;
+    let after_serialized = serde_json::to_string_pretty(after).context("serialize new JSON")?;
+    let diff = compact_line_diff(&before_serialized, &after_serialized);
+    if diff.is_empty() {
+        return Ok(());
+    }
+
+    println!("Diff for {}:", path.display());
+    println!("--- before");
+    println!("+++ after");
+    for line in diff {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn compact_line_diff(before: &str, after: &str) -> Vec<String> {
+    let before_lines: Vec<&str> = before.lines().collect();
+    let after_lines: Vec<&str> = after.lines().collect();
+
+    let mut prefix_len = 0;
+    while prefix_len < before_lines.len()
+        && prefix_len < after_lines.len()
+        && before_lines[prefix_len] == after_lines[prefix_len]
+    {
+        prefix_len += 1;
+    }
+
+    let mut before_suffix_start = before_lines.len();
+    let mut after_suffix_start = after_lines.len();
+    while before_suffix_start > prefix_len
+        && after_suffix_start > prefix_len
+        && before_lines[before_suffix_start - 1] == after_lines[after_suffix_start - 1]
+    {
+        before_suffix_start -= 1;
+        after_suffix_start -= 1;
+    }
+
+    let mut diff = Vec::new();
+    for line in &before_lines[prefix_len..before_suffix_start] {
+        diff.push(format!("-{line}"));
+    }
+    for line in &after_lines[prefix_len..after_suffix_start] {
+        diff.push(format!("+{line}"));
+    }
+    diff
 }
 
 fn ensure_claude_hooks(root: &mut Value) -> Result<bool> {
@@ -774,6 +854,114 @@ impl fmt::Display for PathChoice {
     }
 }
 
+#[derive(Clone, Default)]
+struct PathInputAutocomplete {
+    suggestions: Vec<String>,
+}
+
+impl Autocomplete for PathInputAutocomplete {
+    fn get_suggestions(
+        &mut self,
+        input: &str,
+    ) -> std::result::Result<Vec<String>, CustomUserError> {
+        self.suggestions = path_completion_suggestions(input);
+        Ok(self.suggestions.clone())
+    }
+
+    fn get_completion(
+        &mut self,
+        input: &str,
+        highlighted_suggestion: Option<String>,
+    ) -> std::result::Result<Replacement, CustomUserError> {
+        if let Some(suggestion) = highlighted_suggestion {
+            return Ok(Some(suggestion));
+        }
+
+        if self.suggestions.is_empty() {
+            self.suggestions = path_completion_suggestions(input);
+        }
+        let Some(prefix) = longest_common_prefix(&self.suggestions) else {
+            return Ok(None);
+        };
+        if prefix.starts_with(input) && prefix.len() > input.len() {
+            return Ok(Some(prefix));
+        }
+
+        Ok(None)
+    }
+}
+
+fn path_completion_suggestions(input: &str) -> Vec<String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    path_completion_suggestions_from(input, home.as_deref())
+}
+
+fn path_completion_suggestions_from(input: &str, home: Option<&Path>) -> Vec<String> {
+    let (dir_prefix, file_prefix) = split_path_input(input);
+    let scan_dir = if dir_prefix.is_empty() {
+        PathBuf::from(".")
+    } else {
+        PathBuf::from(&dir_prefix)
+    };
+    let scan_dir = expand_tilde_with_home(scan_dir, home);
+
+    let entries = match fs::read_dir(&scan_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut suggestions = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file_name) = entry.file_name().to_str().map(|name| name.to_string()) else {
+            continue;
+        };
+        if !file_name.starts_with(&file_prefix) {
+            continue;
+        }
+
+        let mut suggestion = format!("{dir_prefix}{file_name}");
+        if path.is_dir() {
+            suggestion.push(std::path::MAIN_SEPARATOR);
+        }
+        suggestions.push(suggestion);
+    }
+
+    suggestions.sort();
+    suggestions
+}
+
+fn split_path_input(input: &str) -> (String, String) {
+    if input == "~" {
+        return ("~/".to_string(), String::new());
+    }
+
+    if let Some(index) = input.rfind(['/', '\\']) {
+        let (dir, prefix) = input.split_at(index + 1);
+        return (dir.to_string(), prefix.to_string());
+    }
+
+    (String::new(), input.to_string())
+}
+
+fn longest_common_prefix(values: &[String]) -> Option<String> {
+    let mut prefix = values.first()?.clone();
+    for value in values.iter().skip(1) {
+        let shared = prefix
+            .char_indices()
+            .zip(value.char_indices())
+            .take_while(|((_, left), (_, right))| left == right)
+            .map(|((idx, ch), _)| idx + ch.len_utf8())
+            .last()
+            .unwrap_or(0);
+        prefix.truncate(shared);
+        if prefix.is_empty() {
+            break;
+        }
+    }
+    Some(prefix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -921,6 +1109,21 @@ mod tests {
     }
 
     #[test]
+    fn normalize_user_paths_expands_home_prefix() {
+        let mut env = EnvGuard::new("init-normalize-tilde-paths");
+        let home = env.set_temp_home();
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+
+        let from_tilde = PathBuf::from("~/agents/jkl.json");
+        let from_absolute = home.join("agents").join("jkl.json");
+        let normalized =
+            normalize_user_paths_from(vec![from_tilde, from_absolute.clone()], &cwd).expect("ok");
+
+        assert_eq!(normalized, vec![from_absolute]);
+    }
+
+    #[test]
     fn absolutize_from_keeps_absolute_and_resolves_relative() {
         let cwd = PathBuf::from("/tmp/root");
         assert_eq!(
@@ -934,6 +1137,19 @@ mod tests {
     }
 
     #[test]
+    fn absolutize_from_expands_tilde_paths() {
+        let mut env = EnvGuard::new("init-absolutize-tilde");
+        let home = env.set_temp_home();
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+
+        assert_eq!(
+            absolutize_from(PathBuf::from("~/agents"), &cwd),
+            home.join("agents")
+        );
+    }
+
+    #[test]
     fn resolve_kiro_hook_paths_non_interactive_uses_override_directory() {
         let env = EnvGuard::new("init-kiro-dir-override");
         let override_dir = env.temp_dir().join("custom").join("agents");
@@ -941,6 +1157,26 @@ mod tests {
             resolve_kiro_hook_paths(InitScope::Local, Some(override_dir.clone()), None, true)
                 .expect("resolve paths");
         assert_eq!(paths, vec![override_dir.join("jkl.json")]);
+    }
+
+    #[test]
+    fn path_completion_suggestions_support_tilde_prefix() {
+        let mut env = EnvGuard::new("init-path-completion");
+        let home = env.set_temp_home();
+        fs::create_dir_all(home.join("agents")).expect("create agents");
+
+        let suggestions = path_completion_suggestions_from("~/ag", Some(home.as_path()));
+        assert_eq!(suggestions, vec!["~/agents/".to_string()]);
+    }
+
+    #[test]
+    fn compact_line_diff_reports_inserted_lines() {
+        let before = "{\n  \"hooks\": {}\n}";
+        let after = "{\n  \"hooks\": {\n    \"stop\": []\n  }\n}";
+        let diff = compact_line_diff(before, after);
+
+        assert!(diff.contains(&"-  \"hooks\": {}".to_string()));
+        assert!(diff.iter().any(|line| line.contains("+    \"stop\": []")));
     }
 
     #[test]

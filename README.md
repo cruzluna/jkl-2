@@ -143,7 +143,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Update from master pre-release channel: `jkl update --pre-release`
 - Update from dev preview channel: `jkl update --pre-release --dev`
 - Interactive integration setup: `jkl init`
-- Non-interactive hooks setup: `jkl init hooks --tool <claude|cursor|kiro> --scope <local|global> --non-interactive [--agent-config-dir <dir> (kiro only)] [--agent-config <path...> (kiro/cursor)]`
+- Non-interactive hooks setup: `jkl init hooks --tool <kiro|cursor|claude> --scope <local|global> --non-interactive [--agent-config-dir <dir> (kiro only)] [--agent-config <path...> (kiro/cursor)]`
 - Non-interactive skills setup: `jkl init skills --tool <codex|claude|kiro> --scope <local|global> --non-interactive`
 - Refresh Fig autocomplete: `jkl init fig-autocomplete`
 - Uninstall binary from current location: `jkl uninstall [--purge-data]`
@@ -265,6 +265,10 @@ Kiro hooks targeting behavior:
 - `--agent-config-dir` chooses which directory the interactive selector scans.
 - `--agent-config-dir` alone does not update every file automatically.
 - In non-interactive mode, if `--agent-config` is omitted, jkl targets `<agent-config-dir>/jkl.json`.
+- `~` is expanded in both `--agent-config-dir` and `--agent-config` paths.
+- Interactive directory override supports Tab path completion.
+- Interactive file selection is multi-select: press Enter to queue files, then choose `[Done] Apply selected files` to finish.
+- When a hook config changes, jkl prints a compact before/after diff before writing the file.
 
 ```json
 {
