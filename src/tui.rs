@@ -252,7 +252,7 @@ impl SessionSearch for NucleoSessionSearch {
     }
 }
 
-struct App {
+struct App<S: SessionSearch> {
     state: TableState,
     sessions: Vec<SessionRow>,
     filtered_sessions: Vec<SessionRow>,
@@ -262,19 +262,21 @@ struct App {
     search: SearchQuery,
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
-    filter: Box<dyn SessionSearch>,
+    filter: S,
 }
 
-impl App {
+impl App<NucleoSessionSearch> {
     /// Creates a list view of sessions and panes
     fn new(sessions: Vec<SessionRow>) -> Result<Self, TuiError> {
-        Self::new_with_filter(sessions, Box::new(NucleoSessionSearch::new()))
+        Self::new_with_filter(sessions, NucleoSessionSearch::new())
     }
+}
 
-    fn new_with_filter(
-        sessions: Vec<SessionRow>,
-        filter: Box<dyn SessionSearch>,
-    ) -> Result<Self, TuiError> {
+impl<S: SessionSearch> App<S> {
+    /// Creates a list view with an injected search backend.
+    ///
+    /// This keeps search behavior testable without heap allocation or dynamic dispatch.
+    fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
         let mut app = Self {
             state: TableState::default(),
             filtered_sessions: sessions.clone(),
@@ -1354,8 +1356,8 @@ esac
         }
     }
 
-    fn passthrough_filter() -> Box<dyn SessionSearch> {
-        Box::new(PassthroughSearch)
+    fn passthrough_filter() -> PassthroughSearch {
+        PassthroughSearch
     }
 
     #[test]
@@ -1493,10 +1495,10 @@ esac
     #[test]
     fn apply_search_with_uses_injected_filter() {
         let sessions = vec![session_row("@1", "one"), session_row("@2", "two")];
-        let filter = Box::new(StubSearch {
+        let filter = StubSearch {
             expected_query: Some("one".to_string()),
             matched_ids: vec!["@1".to_string()],
-        });
+        };
         let mut app = App::new_with_filter(sessions, filter).expect("app");
         app.search.query = "one".to_string();
 
