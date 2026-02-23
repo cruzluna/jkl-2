@@ -146,6 +146,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Non-interactive hooks setup: `jkl init hooks --tool <claude|cursor|kiro> --scope <local|global> --non-interactive [--agent-config-dir <dir> (kiro only)] [--agent-config <path...> (kiro/cursor)]`
 - Non-interactive skills setup: `jkl init skills --tool <codex|claude|kiro> --scope <local|global> --non-interactive`
 - Refresh Fig autocomplete: `jkl init fig-autocomplete`
+- Append basic JKL instructions to AGENTS.md files: `jkl init agents-md [path]`
 - Uninstall binary from current location: `jkl uninstall [--purge-data]`
 - Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
 
@@ -194,6 +195,14 @@ set -g @jkl_force_bind_keys 'on'
 ```
 
 ## Integrations
+
+### AGENTS.md initialization
+
+Use this to append a standard "Basic JKL Instructions" section to every `AGENTS.md` under a path (skips files that already contain the section):
+
+```
+jkl init agents-md .
+```
 
 ### Claude Code hooks
 

@@ -302,6 +302,15 @@ const completionSpec: Fig.Spec = {
           name: "fig-autocomplete",
           description: "Sync jkl spec into Fig and build autocomplete",
         },
+        {
+          name: "agents-md",
+          description: "Append Basic JKL instructions to AGENTS.md files",
+          args: {
+            name: "path",
+            description: "Root directory to scan recursively",
+            template: "folders",
+          },
+        },
       ],
     },
     {

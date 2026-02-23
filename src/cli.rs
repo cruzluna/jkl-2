@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
 use log::{debug, info};
 use std::path::PathBuf;
@@ -94,6 +94,7 @@ enum InitCommands {
     Hooks(InitHooksArgs),
     Skills(InitSkillsArgs),
     FigAutocomplete,
+    AgentsMd(InitAgentsMdArgs),
 }
 
 #[derive(Args)]
@@ -124,6 +125,13 @@ struct InitSkillsArgs {
     scope: Option<InitScope>,
     #[arg(long)]
     non_interactive: bool,
+}
+
+#[derive(Args)]
+struct InitAgentsMdArgs {
+    /// Root directory to search recursively for AGENTS.md files.
+    #[arg(default_value = ".", value_name = "PATH")]
+    root: PathBuf,
 }
 
 pub fn run() -> Result<()> {
@@ -275,6 +283,7 @@ fn handle_init(args: InitArgs) -> Result<()> {
             crate::init::run_skills(cmd.tool, cmd.scope, cmd.non_interactive)
         }
         Some(InitCommands::FigAutocomplete) => crate::init::run_fig_autocomplete(),
+        Some(InitCommands::AgentsMd(cmd)) => crate::init::run_agents_md(cmd.root),
         None => crate::init::run_interactive(),
     }
 }
@@ -294,7 +303,7 @@ fn valid_statuses() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{AgentStatus, load_contexts, session_key};
+    use crate::context::{load_contexts, session_key, AgentStatus};
     use crate::test_utils::EnvGuard;
     #[cfg(unix)]
     use std::fs;

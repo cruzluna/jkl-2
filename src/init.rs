@@ -1,7 +1,7 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
 use inquire::{Select, Text};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::fmt;
 use std::fs;
 use std::io::IsTerminal;
@@ -21,6 +21,14 @@ const KIRO_DESCRIPTION: &str = "Sync jkl status with Kiro activity";
 const JKL_SKILL_MD: &str = include_str!("../skills/jkl-cli/SKILL.md");
 const JKL_SKILL_OPENAI_YAML: &str = include_str!("../skills/jkl-cli/agents/openai.yaml");
 const FIG_SPEC: &str = include_str!("../completions/fig/jkl.ts");
+const BASIC_INSTRUCTIONS: &str = r#"## Basic JKL Instructions
+
+- Do not invoke the TUI command (`jkl tui`) from automated agents.
+- Upsert session metadata: `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
+- Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--window-id <window_id> [--window-name <window_name>]] [--status <status>] [--context <text...>]`
+- Rename a session entry: `jkl rename <session_id> <session_name...>`
+- Sync persisted metadata with live tmux state: `jkl sync`
+"#;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum InitTool {
@@ -61,6 +69,7 @@ enum InitTarget {
     Hooks,
     Skills,
     FigAutocomplete,
+    AgentsMd,
 }
 
 impl fmt::Display for InitTarget {
@@ -69,6 +78,7 @@ impl fmt::Display for InitTarget {
             Self::Hooks => write!(f, "hooks"),
             Self::Skills => write!(f, "skills"),
             Self::FigAutocomplete => write!(f, "fig-autocomplete"),
+            Self::AgentsMd => write!(f, "agents-md"),
         }
     }
 }
@@ -82,6 +92,7 @@ pub fn run_interactive() -> Result<()> {
             InitTarget::Hooks,
             InitTarget::Skills,
             InitTarget::FigAutocomplete,
+            InitTarget::AgentsMd,
         ],
     )
     .prompt()
@@ -91,6 +102,7 @@ pub fn run_interactive() -> Result<()> {
         InitTarget::Hooks => run_hooks(None, None, None, None, false),
         InitTarget::Skills => run_skills(None, None, false),
         InitTarget::FigAutocomplete => run_fig_autocomplete(),
+        InitTarget::AgentsMd => run_agents_md(std::env::current_dir()?),
     }
 }
 
@@ -205,6 +217,15 @@ pub fn run_fig_autocomplete() -> Result<()> {
     )?;
 
     println!("Fig autocomplete build complete.");
+    Ok(())
+}
+
+pub fn run_agents_md(root: PathBuf) -> Result<()> {
+    let summary = append_basic_instructions(&root)?;
+    println!(
+        "Updated {} AGENTS.md files (skipped {})",
+        summary.files_updated, summary.files_skipped
+    );
     Ok(())
 }
 
@@ -677,6 +698,66 @@ fn write_file_if_changed(path: &Path, content: &[u8]) -> Result<bool> {
     Ok(true)
 }
 
+fn append_basic_instructions(root: &Path) -> Result<AppendSummary> {
+    let mut summary = AppendSummary::default();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(path) = stack.pop() {
+        let entries = match fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        for entry in entries {
+            let entry = entry.context("read directory entry")?;
+            let entry_path = entry.path();
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("read file type for {}", entry_path.display()))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                stack.push(entry_path);
+                continue;
+            }
+            if !file_type.is_file() || entry.file_name() != "AGENTS.md" {
+                continue;
+            }
+            if append_instructions_to_file(&entry_path)? {
+                summary.files_updated += 1;
+            } else {
+                summary.files_skipped += 1;
+            }
+        }
+    }
+
+    Ok(summary)
+}
+
+fn append_instructions_to_file(path: &Path) -> Result<bool> {
+    let contents = fs::read_to_string(path)
+        .with_context(|| format!("read AGENTS.md file at {}", path.display()))?;
+    if contents.contains("## Basic JKL Instructions") {
+        return Ok(false);
+    }
+
+    let mut next = String::with_capacity(contents.len() + BASIC_INSTRUCTIONS.len() + 2);
+    let trimmed = contents.trim_end();
+    if !trimmed.is_empty() {
+        next.push_str(trimmed);
+        next.push_str("\n\n");
+    }
+    next.push_str(BASIC_INSTRUCTIONS);
+    if !next.ends_with('\n') {
+        next.push('\n');
+    }
+
+    fs::write(path, next).with_context(|| format!("write AGENTS.md file at {}", path.display()))?;
+    Ok(true)
+}
+
 fn ensure_fig_repo_dir() -> Result<PathBuf> {
     let home = home_dir()?;
     let default_dir = home.join(".fig").join("autocomplete");
@@ -766,6 +847,12 @@ fn home_dir() -> Result<PathBuf> {
 struct PathChoice {
     label: String,
     path: PathBuf,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AppendSummary {
+    files_updated: usize,
+    files_skipped: usize,
 }
 
 impl fmt::Display for PathChoice {
@@ -953,5 +1040,50 @@ mod tests {
         let resolved = resolve_cursor_hook_paths(InitScope::Local, Some(vec![explicit.clone()]))
             .expect("resolve cursor paths");
         assert_eq!(resolved, vec![explicit]);
+    }
+
+    #[test]
+    fn append_basic_instructions_updates_nested_agents_files() {
+        let env = EnvGuard::new("init-agents-md-updates-nested");
+        let root = env.temp_dir().join("workspace");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).expect("create nested directory");
+        let root_file = root.join("AGENTS.md");
+        let nested_file = nested.join("AGENTS.md");
+        fs::write(&root_file, "# Root\n").expect("write root AGENTS.md");
+        fs::write(&nested_file, "# Nested\n").expect("write nested AGENTS.md");
+
+        let summary = append_basic_instructions(&root).expect("append instructions");
+
+        assert_eq!(
+            summary,
+            AppendSummary {
+                files_updated: 2,
+                files_skipped: 0
+            }
+        );
+        let root_contents = fs::read_to_string(&root_file).expect("read root AGENTS.md");
+        let nested_contents = fs::read_to_string(&nested_file).expect("read nested AGENTS.md");
+        assert!(root_contents.contains("## Basic JKL Instructions"));
+        assert!(nested_contents.contains("## Basic JKL Instructions"));
+    }
+
+    #[test]
+    fn append_basic_instructions_skips_existing_section() {
+        let env = EnvGuard::new("init-agents-md-skip-existing");
+        let root = env.temp_dir().join("workspace");
+        fs::create_dir_all(&root).expect("create root directory");
+        let agents_file = root.join("AGENTS.md");
+        fs::write(&agents_file, BASIC_INSTRUCTIONS).expect("write baseline instructions");
+
+        let summary = append_basic_instructions(&root).expect("append instructions");
+
+        assert_eq!(
+            summary,
+            AppendSummary {
+                files_updated: 0,
+                files_skipped: 1
+            }
+        );
     }
 }
