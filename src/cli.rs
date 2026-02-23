@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand};
 use log::{debug, info};
 use std::path::PathBuf;
@@ -303,7 +303,7 @@ fn valid_statuses() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{load_contexts, session_key, AgentStatus};
+    use crate::context::{AgentStatus, load_contexts, session_key};
     use crate::test_utils::EnvGuard;
     #[cfg(unix)]
     use std::fs;

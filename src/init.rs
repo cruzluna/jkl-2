@@ -1,7 +1,7 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 use inquire::{Select, Text};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::fmt;
 use std::fs;
 use std::io::IsTerminal;
