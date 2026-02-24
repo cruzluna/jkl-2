@@ -5,12 +5,13 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
-use std::process::{Command, Stdio};
+use std::io;
 use thiserror::Error;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use log::{debug, info};
+use log::{debug, error, info};
+use nucleo::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo::{Config as NucleoConfig, Matcher as NucleoMatcher};
 
 const DATA_NOT_RECEIVED: &str = "-";
 // TODO: Will make this configurable in the future.
@@ -23,6 +24,8 @@ pub enum TuiError {
     BackendFailure(String),
     #[error("{0}")]
     ContextResolutionFailure(String),
+    #[error("Search failure: {0}")]
+    SearchFailure(String),
     #[error("Terminal I/O error: {0}")]
     TerminalIo(#[from] io::Error),
 }
@@ -174,9 +177,82 @@ struct ColumnWidths {
     status: u16,
 }
 
-type FilterFn = Box<dyn Fn(&str, &[String]) -> Result<String, TuiError>>;
+#[derive(Clone, Debug)]
+struct SearchCandidate {
+    id: String,
+    search_text: String,
+}
 
-struct App {
+impl AsRef<str> for SearchCandidate {
+    fn as_ref(&self) -> &str {
+        &self.search_text
+    }
+}
+
+trait SessionSearch {
+    fn filter_ids(
+        &mut self,
+        query: &str,
+        candidates: &[SearchCandidate],
+    ) -> Result<Vec<String>, TuiError>;
+}
+
+#[derive(Debug)]
+struct NucleoSessionSearch {
+    matcher: NucleoMatcher,
+}
+
+impl NucleoSessionSearch {
+    fn new() -> Self {
+        Self {
+            matcher: NucleoMatcher::new(NucleoConfig::DEFAULT),
+        }
+    }
+}
+
+impl SessionSearch for NucleoSessionSearch {
+    fn filter_ids(
+        &mut self,
+        query: &str,
+        candidates: &[SearchCandidate],
+    ) -> Result<Vec<String>, TuiError> {
+        let query_codepoints = query.chars().count();
+        if query_codepoints > u32::MAX as usize {
+            let message = format!(
+                "search query exceeds matcher length limit ({query_codepoints} code points)"
+            );
+            error!("{message}");
+            return Err(TuiError::SearchFailure(message));
+        }
+
+        if let Some(too_long) = candidates
+            .iter()
+            .find(|candidate| candidate.search_text.chars().count() > u32::MAX as usize)
+        {
+            let message = format!(
+                "search candidate {} exceeds matcher length limit",
+                too_long.id
+            );
+            error!("{message}");
+            return Err(TuiError::SearchFailure(message));
+        }
+
+        let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+        let matches = pattern.match_list(candidates.iter(), &mut self.matcher);
+        debug!(
+            "nucleo matched {} of {} candidates for query={query:?}",
+            matches.len(),
+            candidates.len()
+        );
+
+        Ok(matches
+            .into_iter()
+            .map(|(candidate, _score)| candidate.id.clone())
+            .collect())
+    }
+}
+
+struct App<S: SessionSearch> {
     state: TableState,
     sessions: Vec<SessionRow>,
     filtered_sessions: Vec<SessionRow>,
@@ -186,16 +262,21 @@ struct App {
     search: SearchQuery,
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
-    filter: FilterFn,
+    filter: S,
 }
 
-impl App {
+impl App<NucleoSessionSearch> {
     /// Creates a list view of sessions and panes
     fn new(sessions: Vec<SessionRow>) -> Result<Self, TuiError> {
-        Self::new_with_filter(sessions, Box::new(run_fzf_filter))
+        Self::new_with_filter(sessions, NucleoSessionSearch::new())
     }
+}
 
-    fn new_with_filter(sessions: Vec<SessionRow>, filter: FilterFn) -> Result<Self, TuiError> {
+impl<S: SessionSearch> App<S> {
+    /// Creates a list view with an injected search backend.
+    ///
+    /// This keeps search behavior testable without heap allocation or dynamic dispatch.
+    fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
         let mut app = Self {
             state: TableState::default(),
             filtered_sessions: sessions.clone(),
@@ -354,23 +435,19 @@ impl App {
             return Ok(());
         }
 
-        let candidates = self
-            .sessions
-            .iter()
-            .map(|row| {
-                format!(
-                    "{}\t{}\t{}\t{}",
-                    row.id,
-                    row.name,
-                    status_text(row.status.as_ref()),
-                    row.context
-                )
-            })
-            .collect::<Vec<_>>();
-
-        let output = (self.filter.as_ref())(&self.search.query, &candidates)?;
-        let mut lines = output.lines();
-        let _ = lines.next();
+        let candidates = build_search_candidates(&self.sessions);
+        debug!(
+            "tui applying search query={:?} against {} sessions",
+            self.search.query,
+            candidates.len()
+        );
+        let matched_ids = match self.filter.filter_ids(&self.search.query, &candidates) {
+            Ok(ids) => ids,
+            Err(err) => {
+                error!("tui search failed for query={:?}: {err}", self.search.query);
+                return Err(err);
+            }
+        };
 
         let lookup: HashMap<&str, &SessionRow> = self
             .sessions
@@ -378,11 +455,9 @@ impl App {
             .map(|row| (row.id.as_str(), row))
             .collect();
         let mut filtered = Vec::new();
-        for line in lines {
-            if let Some(id) = line.split('\t').next() {
-                if let Some(row) = lookup.get(id) {
-                    filtered.push((*row).clone());
-                }
+        for id in matched_ids {
+            if let Some(row) = lookup.get(id.as_str()) {
+                filtered.push((*row).clone());
             }
         }
         self.filtered_sessions = filtered;
@@ -906,25 +981,20 @@ fn centered_rect(percent_x: u16, percent_y: u16, rect: Rect) -> Rect {
     horizontal[1]
 }
 
-fn run_fzf_filter(query: &str, candidates: &[String]) -> Result<String, TuiError> {
-    let mut child = Command::new("fzf")
-        .args(["--filter", query, "--print-query", "--reverse"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        for line in candidates {
-            writeln!(stdin, "{line}")?;
-        }
-    }
-
-    let output = child.wait_with_output()?;
-    if !output.status.success() && output.status.code() != Some(1) {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(TuiError::BackendFailure(message));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+fn build_search_candidates(sessions: &[SessionRow]) -> Vec<SearchCandidate> {
+    sessions
+        .iter()
+        .map(|row| SearchCandidate {
+            id: row.id.clone(),
+            search_text: format!(
+                "{}\t{}\t{}\t{}",
+                row.id,
+                row.name,
+                status_text(row.status.as_ref()),
+                row.context
+            ),
+        })
+        .collect()
 }
 
 fn build_sessions(
@@ -1252,6 +1322,44 @@ esac
         env.set_var("PATH", new_path);
     }
 
+    struct StubSearch {
+        expected_query: Option<String>,
+        matched_ids: Vec<String>,
+    }
+
+    impl SessionSearch for StubSearch {
+        fn filter_ids(
+            &mut self,
+            query: &str,
+            candidates: &[SearchCandidate],
+        ) -> Result<Vec<String>, TuiError> {
+            if let Some(expected) = &self.expected_query {
+                assert_eq!(query, expected);
+            }
+            assert!(!candidates.is_empty());
+            Ok(self.matched_ids.clone())
+        }
+    }
+
+    struct PassthroughSearch;
+
+    impl SessionSearch for PassthroughSearch {
+        fn filter_ids(
+            &mut self,
+            _query: &str,
+            candidates: &[SearchCandidate],
+        ) -> Result<Vec<String>, TuiError> {
+            Ok(candidates
+                .iter()
+                .map(|candidate| candidate.id.clone())
+                .collect())
+        }
+    }
+
+    fn passthrough_filter() -> PassthroughSearch {
+        PassthroughSearch
+    }
+
     #[test]
     fn normalize_field_trims_and_defaults() {
         let value = "  hello  ".to_string();
@@ -1387,10 +1495,10 @@ esac
     #[test]
     fn apply_search_with_uses_injected_filter() {
         let sessions = vec![session_row("@1", "one"), session_row("@2", "two")];
-        let filter = Box::new(|query: &str, candidates: &[String]| {
-            assert_eq!(query, "one");
-            Ok(format!("{query}\n{}\n", candidates[0]))
-        });
+        let filter = StubSearch {
+            expected_query: Some("one".to_string()),
+            matched_ids: vec!["@1".to_string()],
+        };
         let mut app = App::new_with_filter(sessions, filter).expect("app");
         app.search.query = "one".to_string();
 
@@ -1398,6 +1506,30 @@ esac
 
         assert_eq!(app.filtered_sessions.len(), 1);
         assert_eq!(app.filtered_sessions[0].id, "@1");
+    }
+
+    #[test]
+    fn nucleo_session_search_supports_fuzzy_filtering() {
+        let mut search = NucleoSessionSearch::new();
+        let candidates = vec![
+            SearchCandidate {
+                id: "@1".to_string(),
+                search_text: "@1\talpha\t-\tctx".to_string(),
+            },
+            SearchCandidate {
+                id: "@2".to_string(),
+                search_text: "@2\tbeta\t-\tctx".to_string(),
+            },
+            SearchCandidate {
+                id: "@3".to_string(),
+                search_text: "@3\tgamma\t-\tctx".to_string(),
+            },
+        ];
+
+        let matches = search
+            .filter_ids("gma", &candidates)
+            .expect("nucleo fuzzy search");
+        assert_eq!(matches, vec!["@3".to_string()]);
     }
 
     #[test]
@@ -1412,7 +1544,7 @@ esac
     #[test]
     fn row_label_prefixes_session_index() {
         let sessions = vec![session_row("@1", "alpha"), session_row("@2", "beta")];
-        let app = App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
         assert_eq!(app.row_label(&app.rows[0]), "0: alpha");
         assert_eq!(app.row_label(&app.rows[1]), "1: beta");
     }
@@ -1422,7 +1554,7 @@ esac
         let sessions = (0..12)
             .map(|index| session_row(&format!("@{index}"), &format!("session-{index}")))
             .collect();
-        let app = App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
 
         assert_eq!(app.row_label(&app.rows[10]), "M-a: session-10");
         assert_eq!(app.row_label(&app.rows[11]), "M-b: session-11");
@@ -1452,8 +1584,7 @@ esac
             }],
         }];
 
-        let mut app =
-            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
 
@@ -1497,8 +1628,7 @@ esac
             session_row("@2", "beta"),
         ];
 
-        let mut app =
-            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
         app.jump_to_session_index(1);
@@ -1513,8 +1643,7 @@ esac
     #[test]
     fn delete_mode_exits_on_non_x_key() {
         let sessions = vec![session_row("@1", "alpha")];
-        let mut app =
-            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
 
         app.enter_delete_mode();
         match &app.mode {
@@ -1547,8 +1676,7 @@ esac
         env.set_var("TMUX_LIST_PANES", "");
 
         let sessions = vec![session_row("@1", "alpha")];
-        let mut app =
-            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
         app.enter_delete_mode();
 
         app.handle_command_mode_key(KeyCode::Char('x'))
@@ -1571,8 +1699,7 @@ esac
         env.set_var("TMUX_LIST_PANES", "");
 
         let sessions = vec![session_with_window_and_pane()];
-        let mut app =
-            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
         app.state.select(Some(1));
@@ -1598,8 +1725,7 @@ esac
         env.set_var("TMUX_LIST_PANES", "");
 
         let sessions = vec![session_with_window_and_pane()];
-        let mut app =
-            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
         app.state.select(Some(2));
@@ -1643,8 +1769,7 @@ esac
             }],
         }];
 
-        let mut app =
-            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
         app.state.select(Some(2));
@@ -1702,8 +1827,7 @@ esac
             ],
         }];
 
-        let mut app =
-            App::new_with_filter(sessions, Box::new(|_, _| Ok(String::new()))).expect("app");
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
         app.state.select(Some(4));

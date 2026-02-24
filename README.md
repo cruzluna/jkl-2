@@ -11,7 +11,6 @@
 ## Requirements
 
 - `tmux`
-- `fzf`
 
 ## Install
 
