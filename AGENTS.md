@@ -40,3 +40,11 @@ Use this as the default playbook for coding agents in this repository.
 - Update docs when commands or behavior change.
 - Defer to runtime tmux values for targeting and navigation. Session/window/pane IDs can change after tmux resurrect or restart.
 - Treat persisted context IDs as advisory metadata. Re-resolve live IDs from tmux (`list-sessions`, `list-panes`, pane targets) before executing switch/select commands.
+
+## Cursor Cloud specific instructions
+
+- **Rust toolchain**: The repo uses `edition = "2024"` which requires Rust >= 1.85.0. The update script runs `rustup update stable` to ensure the toolchain is current.
+- **tmux is pre-installed** (3.4). To test the TUI end-to-end, create tmux sessions first: `tmux new-session -d -s test`.
+- **Clippy `-D warnings`**: On newer Rust stable versions, `cargo clippy --all-targets -- -D warnings` may fail with pre-existing warnings (e.g. `collapsible_if`, `io_other_error`). Use `cargo clippy --all-targets` (without `-D warnings`) to check for new issues without blocking on existing ones.
+- **Build/test/lint commands**: See the "Build, Test, Lint" section above. All commands run from the workspace root.
+- **No external services required**: The app only needs the `tmux` binary and the filesystem (`~/.config/jkl/`). No databases, Docker, or network services are needed for development or testing.
