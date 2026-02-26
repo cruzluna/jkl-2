@@ -2,7 +2,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -938,14 +938,14 @@ impl PaneSelector {
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         return Ok(());
                     }
-                    KeyCode::Left | KeyCode::Char('h') => {
+                    KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') => {
                         if self.selected == 0 {
                             self.selected = self.options.len() - 1;
                         } else {
                             self.selected -= 1;
                         }
                     }
-                    KeyCode::Right | KeyCode::Char('l') => {
+                    KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') => {
                         self.selected = (self.selected + 1) % self.options.len();
                     }
                     KeyCode::Enter => {
@@ -974,7 +974,20 @@ impl PaneSelector {
 
     /// Draw the pane selector UI
     fn draw(&self, frame: &mut Frame) {
-        let area = centered_rect(60, 20, frame.area());
+        let popup_area = frame.area();
+        let pane_title = format!("Pane {}", self.pane_id);
+        let options_line_width: u16 = self
+            .options
+            .iter()
+            .map(|(label, _)| (UnicodeWidthStr::width(label.as_str()) + 2) as u16)
+            .sum();
+        let title_width = UnicodeWidthStr::width(pane_title.as_str()) as u16;
+        let required_inner_width = options_line_width.max(title_width).max(1);
+        let available_inner_width = popup_area.width.max(1);
+        let wrapped_lines = required_inner_width.div_ceil(available_inner_width).max(1);
+        let selector_width = required_inner_width.min(popup_area.width).max(1);
+        let selector_height = (wrapped_lines + 1).min(popup_area.height).max(1);
+        let area = centered_rect_size(selector_width, selector_height, popup_area);
         let spans = self
             .options
             .iter()
@@ -988,13 +1001,12 @@ impl PaneSelector {
                 Span::styled(format!(" {label} "), style)
             })
             .collect::<Vec<_>>();
-        let line = Line::from(spans);
-        let pane_title = format!("Pane {}", self.pane_id);
-        let paragraph = Paragraph::new(line)
+        let text = Text::from(vec![Line::from(pane_title), Line::from(spans)]);
+        let paragraph = Paragraph::new(text)
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title(pane_title));
+            .wrap(Wrap { trim: true });
 
-        frame.render_widget(Clear, area);
+        frame.render_widget(Clear, popup_area);
         frame.render_widget(paragraph, area);
     }
 }
@@ -1037,20 +1049,12 @@ fn current_pane_status(
     }))
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, rect: Rect) -> Rect {
-    let vertical = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-    ])
-    .split(rect);
-    let horizontal = Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-    ])
-    .split(vertical[1]);
-    horizontal[1]
+fn centered_rect_size(width: u16, height: u16, rect: Rect) -> Rect {
+    let width = width.min(rect.width);
+    let height = height.min(rect.height);
+    let x = rect.x + rect.width.saturating_sub(width) / 2;
+    let y = rect.y + rect.height.saturating_sub(height) / 2;
+    Rect::new(x, y, width, height)
 }
 
 fn build_search_candidates(sessions: &[SessionRow]) -> Vec<SearchCandidate> {

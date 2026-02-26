@@ -39,6 +39,6 @@ bind_prefix_key() {
 bind_prefix_key "@jkl_key_tui" "f" display-popup -E -w 40% -h 40% "jkl tui"
 bind_prefix_key "@jkl_key_context" "W" command-prompt -p "Context for #S:" "run-shell \"jkl upsert '#S' --session-id '#{session_id}' --context '%%'\""
 bind_prefix_key "@jkl_key_edit" "e" display-popup -E -w 40% -h 40% "nvim ~/.config/jkl/session_context.json"
-bind_prefix_key "@jkl_key_pane_state" "S" run-shell 'tmux display-popup -E -w 30% -h 30% "jkl tui --pane-state --session-name \"#{session_name}\" --pane-id \"#{pane_id}\""'
+bind_prefix_key "@jkl_key_pane_state" "S" run-shell 'tmux display-popup -E -w 30% -h 20% "jkl tui --pane-state --session-name \"#{session_name}\" --pane-id \"#{pane_id}\""'
 
 tmux set-hook -g session-renamed "run-shell \"jkl rename '#{hook_session}' '#{hook_session_name}'\""
