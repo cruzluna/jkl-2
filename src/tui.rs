@@ -177,6 +177,14 @@ struct ColumnWidths {
     status: u16,
 }
 
+/// Concrete column widths used while rendering the table for a specific frame area.
+#[derive(Debug, PartialEq, Eq)]
+struct TableColumnWidths {
+    session: u16,
+    status: u16,
+    context: u16,
+}
+
 #[derive(Clone, Debug)]
 struct SearchCandidate {
     id: String,
@@ -693,15 +701,7 @@ impl<S: SessionSearch> App<S> {
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let header = Row::new(["Session", "Status", "Context"])
             .style(Style::default().add_modifier(Modifier::BOLD));
-
-        // Calculate available width for context column
-        // area.width - 2 (borders) - session_width - status_width - 2 (column spacing)
-        let available_context_width = area
-            .width
-            .saturating_sub(2) // borders
-            .saturating_sub(self.widths.session + 1)
-            .saturating_sub(self.widths.status + 1)
-            .saturating_sub(2); // column spacing
+        let widths = self.table_column_widths(area);
 
         let rows = self.rows.iter().enumerate().map(|(index, item)| {
             let mut base_style = if index % 2 == 0 {
@@ -713,11 +713,14 @@ impl<S: SessionSearch> App<S> {
                 base_style = base_style.add_modifier(Modifier::DIM);
             }
             Row::new(vec![
-                Cell::from(self.row_label(item)),
+                Cell::from(truncate_with_ellipsis(
+                    &self.row_label(item),
+                    widths.session as usize,
+                )),
                 Cell::from(status_text(row_status(item))).style(status_style(row_status(item))),
                 Cell::from(truncate_with_ellipsis(
                     &row_context(item),
-                    available_context_width as usize,
+                    widths.context as usize,
                 )),
             ])
             .style(base_style)
@@ -726,9 +729,9 @@ impl<S: SessionSearch> App<S> {
         let table = Table::new(
             rows,
             [
-                Constraint::Length(self.widths.session + 1),
-                Constraint::Length(self.widths.status + 1),
-                Constraint::Min(0),
+                Constraint::Length(widths.session),
+                Constraint::Length(widths.status),
+                Constraint::Length(widths.context),
             ],
         )
         .header(header)
@@ -764,6 +767,75 @@ impl<S: SessionSearch> App<S> {
                 .unwrap_or_else(|| row.name.clone()),
             RowItem::Window(row) => format!("  ◦ {}", row.name),
             RowItem::Pane(row) => format!("    └─ {}", pane_label(row)),
+        }
+    }
+
+    fn table_column_widths(&self, area: Rect) -> TableColumnWidths {
+        #[allow(clippy::cast_possible_truncation)]
+        let session_header_width = UnicodeWidthStr::width("Session") as u16;
+        #[allow(clippy::cast_possible_truncation)]
+        let status_header_width = UnicodeWidthStr::width("Status") as u16;
+        #[allow(clippy::cast_possible_truncation)]
+        let context_header_width = UnicodeWidthStr::width("Context") as u16;
+
+        // Account for table borders and the default one-cell spacing between three columns.
+        let inner_width = area.width.saturating_sub(2);
+        let usable_width = inner_width.saturating_sub(2);
+        if usable_width == 0 {
+            return TableColumnWidths {
+                session: 0,
+                status: 0,
+                context: 0,
+            };
+        }
+
+        let status_width = self
+            .widths
+            .status
+            .max(status_header_width)
+            .min(usable_width);
+        let remaining_width = usable_width.saturating_sub(status_width);
+        if remaining_width == 0 {
+            return TableColumnWidths {
+                session: 0,
+                status: status_width,
+                context: 0,
+            };
+        }
+
+        // Keep session constrained so context remains visible on medium terminal widths.
+        let max_session_by_ratio = remaining_width.saturating_mul(45).saturating_div(100);
+        let min_session_width = if remaining_width > 1 {
+            session_header_width.min(remaining_width - 1)
+        } else {
+            0
+        };
+        let mut session_width = self
+            .widths
+            .session
+            .max(session_header_width)
+            .min(max_session_by_ratio.max(min_session_width));
+
+        let mut context_width = remaining_width.saturating_sub(session_width);
+        let min_context_width = if remaining_width > min_session_width {
+            context_header_width.min(remaining_width - min_session_width)
+        } else {
+            0
+        };
+        if context_width < min_context_width {
+            let deficit = min_context_width - context_width;
+            session_width = session_width.saturating_sub(deficit);
+            context_width = remaining_width.saturating_sub(session_width);
+        }
+        if context_width == 0 && remaining_width > 0 {
+            context_width = 1;
+            session_width = remaining_width.saturating_sub(context_width);
+        }
+
+        TableColumnWidths {
+            session: session_width,
+            status: status_width,
+            context: context_width,
         }
     }
 
@@ -1589,6 +1661,23 @@ esac
         app.rebuild_rows();
 
         assert_eq!(app.row_label(&app.rows[2]), "    └─ verylon...");
+    }
+
+    #[test]
+    fn table_column_widths_cap_session_and_preserve_context() {
+        let sessions = vec![session_row(
+            "@1",
+            "this-is-a-very-long-session-name-that-should-not-hide-context",
+        )];
+        let app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+
+        let widths = app.table_column_widths(Rect::new(0, 0, 60, 10));
+        assert!(widths.session < app.widths.session);
+        assert!(usize::from(widths.context) >= UnicodeWidthStr::width("Context"));
+
+        let rendered_label =
+            truncate_with_ellipsis(&app.row_label(&app.rows[0]), widths.session as usize);
+        assert!(rendered_label.ends_with("..."));
     }
 
     #[test]
