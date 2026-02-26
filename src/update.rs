@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use self_update::backends::github::ReleaseList;
-use self_update::update::{Release, ReleaseAsset};
+use self_update::update::Release;
 use std::fs;
 
 const REPO_OWNER: &str = "cruzluna";
@@ -219,6 +219,7 @@ pub fn run(channel: UpdateChannel) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use self_update::update::ReleaseAsset;
 
     fn release(version: &str) -> Release {
         Release {
