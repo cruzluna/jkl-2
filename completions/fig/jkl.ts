@@ -22,6 +22,20 @@ const initScopeSuggestions: Fig.Suggestion[] = [
   { name: "global", description: "Write config under your HOME directory" },
 ];
 
+const initPromptProviderSuggestions: Fig.Suggestion[] = [
+  { name: "claude", description: "Claude Code prompts" },
+  { name: "codex", description: "Codex prompts" },
+  { name: "cursor", description: "Cursor CLI prompts" },
+  { name: "kiro", description: "Kiro CLI prompts" },
+];
+
+const initPromptOptionSuggestions: Fig.Suggestion[] = [
+  { name: "hooks", description: "Hook prompts" },
+  { name: "skills", description: "Skill prompts" },
+  { name: "AGENTS.md", description: "AGENTS.md prompt" },
+  { name: "tmux.conf", description: "tmux.conf prompt" },
+];
+
 const sessionNameGenerator: Fig.Generator = {
   script: 'tmux list-sessions -F "#{session_name}" 2>/dev/null',
   postProcess: (output) =>
@@ -227,7 +241,7 @@ const completionSpec: Fig.Spec = {
     },
     {
       name: "init",
-      description: "Initialize hooks, skills, and autocomplete integrations",
+      description: "Set up integrations and print copy/paste prompts",
       subcommands: [
         {
           name: "hooks",
@@ -295,6 +309,28 @@ const completionSpec: Fig.Spec = {
             {
               name: "--non-interactive",
               description: "Fail instead of prompting for missing options",
+            },
+          ],
+        },
+        {
+          name: "prompts",
+          description: "Print copy/paste prompts for integrations",
+          options: [
+            {
+              name: "--provider",
+              description: "Filter prompts by integration provider",
+              args: {
+                name: "provider",
+                suggestions: initPromptProviderSuggestions,
+              },
+            },
+            {
+              name: "--option",
+              description: "Filter prompts by prompt type",
+              args: {
+                name: "option",
+                suggestions: initPromptOptionSuggestions,
+              },
             },
           ],
         },

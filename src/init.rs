@@ -21,6 +21,31 @@ const KIRO_DESCRIPTION: &str = "Sync jkl status with Kiro activity";
 const JKL_SKILL_MD: &str = include_str!("../skills/jkl-cli/SKILL.md");
 const JKL_SKILL_OPENAI_YAML: &str = include_str!("../skills/jkl-cli/agents/openai.yaml");
 const FIG_SPEC: &str = include_str!("../completions/fig/jkl.ts");
+const TMUX_CONF_LINES: [&str; 3] = [
+    "set -g @plugin 'cruzluna/jkl-2'",
+    "set -g @jkl_force_bind_keys 'on'",
+    "run '~/.tmux/plugins/tpm/tpm'",
+];
+const AGENTS_MD_APPEND_LINES: [&str; 10] = [
+    "## jkl",
+    "- When working inside tmux, use `jkl upsert` to keep jkl metadata current.",
+    "- For pane updates, always use live tmux identifiers:",
+    "  - Session name: `$(tmux display-message -p '#S')`",
+    "  - Session id: `$(tmux display-message -p '#{session_id}')`",
+    "  - Pane id: `$(tmux display-message -p '#{pane_id}')`",
+    "- Pane example: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working`",
+    "- Pane context example: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --context \"triage auth bug\"`",
+    "- Session example: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --status waiting --context \"need review\"`",
+    "- If you update session or pane context, keep it under 10 words.",
+];
+const ALL_PROMPT_TOOLS: [InitTool; 4] = [
+    InitTool::Claude,
+    InitTool::Cursor,
+    InitTool::Kiro,
+    InitTool::Codex,
+];
+const HOOK_PROMPT_TOOLS: [InitTool; 3] = [InitTool::Claude, InitTool::Cursor, InitTool::Kiro];
+const SKILL_PROMPT_TOOLS: [InitTool; 3] = [InitTool::Codex, InitTool::Claude, InitTool::Kiro];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum InitTool {
@@ -52,6 +77,32 @@ impl fmt::Display for InitScope {
         match self {
             Self::Local => write!(f, "local"),
             Self::Global => write!(f, "global"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum InitPromptOption {
+    Hooks,
+    Skills,
+    #[value(
+        name = "AGENTS.md",
+        alias = "agents.md",
+        alias = "agents-md",
+        alias = "agents"
+    )]
+    AgentsMd,
+    #[value(name = "tmux.conf", alias = "tmux-conf", alias = "tmux_conf")]
+    TmuxConf,
+}
+
+impl fmt::Display for InitPromptOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Hooks => write!(f, "hooks"),
+            Self::Skills => write!(f, "skills"),
+            Self::AgentsMd => write!(f, "AGENTS.md"),
+            Self::TmuxConf => write!(f, "tmux.conf"),
         }
     }
 }
@@ -206,6 +257,205 @@ pub fn run_fig_autocomplete() -> Result<()> {
 
     println!("Fig autocomplete build complete.");
     Ok(())
+}
+
+pub fn run_prompts(provider: Option<InitTool>, option: Option<InitPromptOption>) -> Result<()> {
+    println!("{}", render_prompts(provider, option)?);
+    Ok(())
+}
+
+fn render_prompts(provider: Option<InitTool>, option: Option<InitPromptOption>) -> Result<String> {
+    if let (Some(provider), Some(option)) = (provider, option) {
+        if !provider_supports_prompt_option(provider, option) {
+            return Ok(format!(
+                "{} does not support {} prompts.",
+                prompt_provider_name(provider),
+                option
+            ));
+        }
+    }
+
+    if option == Some(InitPromptOption::AgentsMd) {
+        return Ok(render_agents_append_snippet());
+    }
+
+    let options = option.map(|choice| vec![choice]).unwrap_or_else(|| {
+        vec![
+            InitPromptOption::Hooks,
+            InitPromptOption::Skills,
+            InitPromptOption::AgentsMd,
+            InitPromptOption::TmuxConf,
+        ]
+    });
+
+    let mut sections = Vec::new();
+    for option in options {
+        match option {
+            InitPromptOption::Hooks => {
+                let tools = prompt_tools_for_option(provider, option, &HOOK_PROMPT_TOOLS);
+                if !tools.is_empty() {
+                    sections.push(render_hooks_prompt(&tools)?);
+                }
+            }
+            InitPromptOption::Skills => {
+                let tools = prompt_tools_for_option(provider, option, &SKILL_PROMPT_TOOLS);
+                if !tools.is_empty() {
+                    sections.push(render_skills_prompt(&tools));
+                }
+            }
+            InitPromptOption::AgentsMd => {
+                let tools = provider
+                    .map(|tool| vec![tool])
+                    .unwrap_or_else(|| ALL_PROMPT_TOOLS.to_vec());
+                sections.push(render_agents_prompt(&tools));
+            }
+            InitPromptOption::TmuxConf => {
+                let tools = provider
+                    .map(|tool| vec![tool])
+                    .unwrap_or_else(|| ALL_PROMPT_TOOLS.to_vec());
+                sections.push(render_tmux_prompt(&tools));
+            }
+        }
+    }
+
+    Ok(sections.join("\n\n"))
+}
+
+fn provider_supports_prompt_option(provider: InitTool, option: InitPromptOption) -> bool {
+    match option {
+        InitPromptOption::Hooks => HOOK_PROMPT_TOOLS.contains(&provider),
+        InitPromptOption::Skills => SKILL_PROMPT_TOOLS.contains(&provider),
+        InitPromptOption::AgentsMd | InitPromptOption::TmuxConf => true,
+    }
+}
+
+fn prompt_tools_for_option(
+    provider: Option<InitTool>,
+    option: InitPromptOption,
+    supported_tools: &[InitTool],
+) -> Vec<InitTool> {
+    match provider {
+        Some(tool) if provider_supports_prompt_option(tool, option) => vec![tool],
+        Some(_) => Vec::new(),
+        None => supported_tools.to_vec(),
+    }
+}
+
+fn render_hooks_prompt(tools: &[InitTool]) -> Result<String> {
+    let mut sections = vec!["Hooks".to_string()];
+    for tool in tools {
+        let config = hook_config_snippet(*tool)?;
+        sections.push(format!(
+            "{}\nConfig paths:\n{}\nConfig:\n{}",
+            prompt_provider_name(*tool),
+            hook_path_hints(*tool)
+                .iter()
+                .map(|path| format!("- {path}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            config
+        ));
+    }
+    Ok(sections.join("\n\n"))
+}
+
+fn render_skills_prompt(tools: &[InitTool]) -> String {
+    let roots = tools
+        .iter()
+        .map(|tool| {
+            format!(
+                "- {}: {}",
+                prompt_provider_name(*tool),
+                skill_root_hint(*tool)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "Skills\n\nProviders: {}\nCreate `jkl-cli/SKILL.md` and `jkl-cli/agents/openai.yaml` under one of these skill roots:\n{}\n\nSKILL.md\n{}\n\nagents/openai.yaml\n{}",
+        render_tool_list(tools),
+        roots,
+        JKL_SKILL_MD,
+        JKL_SKILL_OPENAI_YAML
+    )
+}
+
+fn render_agents_prompt(tools: &[InitTool]) -> String {
+    format!(
+        "AGENTS.md\n\nProviders: {}\nAppend this to `AGENTS.md`:\n{}",
+        render_tool_list(tools),
+        render_agents_append_snippet()
+    )
+}
+
+fn render_agents_append_snippet() -> String {
+    AGENTS_MD_APPEND_LINES.join("\n")
+}
+
+fn render_tmux_prompt(tools: &[InitTool]) -> String {
+    format!(
+        "tmux.conf\n\nProviders: {}\nAdd these lines to `~/.tmux.conf`:\n{}\nThen reload tmux. If TPM still needs to install the plugin, run:\n{}\nAfter reloading, open the list right away with `<prefix> f` (or your configured agent view key).",
+        render_tool_list(tools),
+        TMUX_CONF_LINES
+            .iter()
+            .map(|line| format!("- {line}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        "tmux run-shell \"~/.tmux/plugins/tpm/bin/install_plugins\""
+    )
+}
+
+fn render_tool_list(tools: &[InitTool]) -> String {
+    tools
+        .iter()
+        .map(|tool| prompt_provider_name(*tool))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn prompt_provider_name(tool: InitTool) -> &'static str {
+    match tool {
+        InitTool::Claude => "Claude Code",
+        InitTool::Cursor => "Cursor",
+        InitTool::Kiro => "Kiro CLI",
+        InitTool::Codex => "Codex",
+    }
+}
+
+fn hook_path_hints(tool: InitTool) -> &'static [&'static str] {
+    match tool {
+        InitTool::Claude => &[".claude/settings.local.json", "~/.claude/settings.json"],
+        InitTool::Cursor => &[".cursor/hooks.json", "~/.cursor/hooks.json"],
+        InitTool::Kiro => &[".kiro/agents/jkl.json", "~/.kiro/agents/jkl.json"],
+        InitTool::Codex => &[],
+    }
+}
+
+fn skill_root_hint(tool: InitTool) -> &'static str {
+    match tool {
+        InitTool::Claude => ".claude/skills or ~/.claude/skills",
+        InitTool::Cursor => "unsupported",
+        InitTool::Kiro => ".kiro/skills or ~/.kiro/skills",
+        InitTool::Codex => ".agents/skills or ~/.agents/skills",
+    }
+}
+
+fn hook_config_snippet(tool: InitTool) -> Result<String> {
+    let mut root = Value::Object(Map::new());
+    match tool {
+        InitTool::Claude => {
+            ensure_claude_hooks(&mut root)?;
+        }
+        InitTool::Cursor => {
+            ensure_cursor_hooks(&mut root)?;
+        }
+        InitTool::Kiro => {
+            ensure_kiro_hooks(&mut root)?;
+        }
+        InitTool::Codex => bail!("codex does not support hooks"),
+    }
+
+    Ok(serde_json::to_string_pretty(&root).context("serialize hook config")?)
 }
 
 fn resolve_tool(
@@ -953,5 +1203,45 @@ mod tests {
         let resolved = resolve_cursor_hook_paths(InitScope::Local, Some(vec![explicit.clone()]))
             .expect("resolve cursor paths");
         assert_eq!(resolved, vec![explicit]);
+    }
+
+    #[test]
+    fn render_prompts_returns_note_for_unsupported_explicit_combo() {
+        let rendered = render_prompts(Some(InitTool::Cursor), Some(InitPromptOption::Skills))
+            .expect("render prompts");
+        assert_eq!(rendered, "Cursor does not support skills prompts.");
+    }
+
+    #[test]
+    fn render_prompts_for_codex_includes_supported_sections_only() {
+        let rendered = render_prompts(Some(InitTool::Codex), None).expect("render prompts");
+        assert!(rendered.contains("Skills"));
+        assert!(rendered.contains("AGENTS.md"));
+        assert!(rendered.contains("tmux.conf"));
+        assert!(!rendered.contains("Hooks"));
+    }
+
+    #[test]
+    fn render_hooks_prompt_reuses_existing_hook_commands() {
+        let rendered = render_prompts(Some(InitTool::Claude), Some(InitPromptOption::Hooks))
+            .expect("render hooks");
+        assert!(rendered.contains("UserPromptSubmit"));
+        assert!(rendered.contains("--status working"));
+        assert!(rendered.contains("--status waiting"));
+        assert!(rendered.contains(".claude/settings.local.json"));
+        assert!(rendered.contains("~/.claude/settings.json"));
+    }
+
+    #[test]
+    fn render_agents_prompt_uses_append_instructions_and_tmux_identifiers() {
+        let rendered = render_prompts(Some(InitTool::Codex), Some(InitPromptOption::AgentsMd))
+            .expect("render agents prompt");
+        assert!(!rendered.contains("AGENTS.md\n\nProviders:"));
+        assert!(!rendered.contains("Providers:"));
+        assert!(rendered.starts_with("## jkl"));
+        assert!(rendered.contains("$(tmux display-message -p '#{pane_id}')"));
+        assert!(rendered.contains("--pane-id"));
+        assert!(rendered.contains("--context \"triage auth bug\""));
+        assert!(rendered.contains("keep it under 10 words"));
     }
 }
