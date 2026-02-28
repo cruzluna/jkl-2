@@ -4,7 +4,7 @@ use log::{debug, info};
 use std::path::PathBuf;
 
 use crate::context::{AgentStatus, ContextError};
-use crate::init::{InitScope, InitTool};
+use crate::init::{InitPromptOption, InitScope, InitTool};
 use crate::tui::TuiError;
 
 #[derive(Parser)]
@@ -93,6 +93,7 @@ struct InitArgs {
 enum InitCommands {
     Hooks(InitHooksArgs),
     Skills(InitSkillsArgs),
+    Prompts(InitPromptsArgs),
     FigAutocomplete,
 }
 
@@ -124,6 +125,16 @@ struct InitSkillsArgs {
     scope: Option<InitScope>,
     #[arg(long)]
     non_interactive: bool,
+}
+
+#[derive(Args)]
+struct InitPromptsArgs {
+    /// Limit output to a single integration provider.
+    #[arg(long, value_enum)]
+    provider: Option<InitTool>,
+    /// Limit output to a single prompt category.
+    #[arg(long, value_enum)]
+    option: Option<InitPromptOption>,
 }
 
 pub fn run() -> Result<()> {
@@ -262,20 +273,30 @@ fn resolve_update_channel(args: UpdateArgs) -> Result<crate::update::UpdateChann
 }
 
 fn handle_init(args: InitArgs) -> Result<()> {
-    eprintln!("Warning: 'jkl init' is experimental and may change without notice.");
     match args.command {
-        Some(InitCommands::Hooks(cmd)) => crate::init::run_hooks(
-            cmd.tool,
-            cmd.scope,
-            cmd.agent_config_dir,
-            cmd.agent_config,
-            cmd.non_interactive,
-        ),
+        Some(InitCommands::Hooks(cmd)) => {
+            eprintln!("Warning: 'jkl init' is experimental and may change without notice.");
+            crate::init::run_hooks(
+                cmd.tool,
+                cmd.scope,
+                cmd.agent_config_dir,
+                cmd.agent_config,
+                cmd.non_interactive,
+            )
+        }
         Some(InitCommands::Skills(cmd)) => {
+            eprintln!("Warning: 'jkl init' is experimental and may change without notice.");
             crate::init::run_skills(cmd.tool, cmd.scope, cmd.non_interactive)
         }
-        Some(InitCommands::FigAutocomplete) => crate::init::run_fig_autocomplete(),
-        None => crate::init::run_interactive(),
+        Some(InitCommands::Prompts(cmd)) => crate::init::run_prompts(cmd.provider, cmd.option),
+        Some(InitCommands::FigAutocomplete) => {
+            eprintln!("Warning: 'jkl init' is experimental and may change without notice.");
+            crate::init::run_fig_autocomplete()
+        }
+        None => {
+            eprintln!("Warning: 'jkl init' is experimental and may change without notice.");
+            crate::init::run_interactive()
+        }
     }
 }
 
@@ -553,5 +574,45 @@ esac
             Some("@10")
         );
         assert!(!renamed.panes.contains_key("%9"));
+    }
+
+    #[test]
+    fn parse_init_prompts_accepts_exact_tmux_conf_value() {
+        let cli = Cli::try_parse_from([
+            "jkl",
+            "init",
+            "prompts",
+            "--provider",
+            "cursor",
+            "--option",
+            "tmux.conf",
+        ])
+        .expect("parse init prompts");
+
+        match cli.command {
+            Commands::Init(InitArgs {
+                command: Some(InitCommands::Prompts(cmd)),
+            }) => {
+                assert_eq!(cmd.provider, Some(InitTool::Cursor));
+                assert_eq!(cmd.option, Some(InitPromptOption::TmuxConf));
+            }
+            _ => panic!("expected init prompts command"),
+        }
+    }
+
+    #[test]
+    fn parse_init_prompts_accepts_exact_agents_md_value() {
+        let cli = Cli::try_parse_from(["jkl", "init", "prompts", "--option", "AGENTS.md"])
+            .expect("parse init prompts");
+
+        match cli.command {
+            Commands::Init(InitArgs {
+                command: Some(InitCommands::Prompts(cmd)),
+            }) => {
+                assert_eq!(cmd.provider, None);
+                assert_eq!(cmd.option, Some(InitPromptOption::AgentsMd));
+            }
+            _ => panic!("expected init prompts command"),
+        }
     }
 }
