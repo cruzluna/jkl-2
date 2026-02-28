@@ -6,6 +6,8 @@ use std::fs;
 const REPO_OWNER: &str = "cruzluna";
 const REPO_NAME: &str = "jkl-2";
 const BIN_NAME: &str = "jkl";
+const WORKING_HOOK_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
+const WAITING_HOOK_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateChannel {
@@ -211,9 +213,46 @@ pub fn run(channel: UpdateChannel) -> Result<()> {
         log::info!("already up-to-date");
     }
 
-    println!("To refresh Fig autocomplete, run: jkl init fig-autocomplete");
+    print_post_update_notes();
 
     Ok(())
+}
+
+fn print_post_update_notes() {
+    println!("To refresh Fig autocomplete, run: jkl init fig-autocomplete");
+    println!();
+    println!("Helpful next steps ✨");
+    println!();
+    println!("Claude Code prompt");
+    println!(
+        "  Paste this into Claude Code to mark the current tmux pane as working when you send a prompt, and waiting when Claude stops."
+    );
+    println!("  UserPromptSubmit:");
+    println!("    {WORKING_HOOK_COMMAND}");
+    println!("  Stop:");
+    println!("    {WAITING_HOOK_COMMAND}");
+    println!();
+    println!("Kiro CLI prompt");
+    println!(
+        "  Paste this into Kiro CLI to mark the current tmux pane as working when you send a prompt, and waiting when Kiro stops."
+    );
+    println!("  userPromptSubmit:");
+    println!("    {WORKING_HOOK_COMMAND}");
+    println!("  stop:");
+    println!("    {WAITING_HOOK_COMMAND}");
+    println!();
+    println!("tmux setup prompt");
+    println!(
+        "  Paste this into your agent to update ~/.tmux.conf so the jkl-2 tmux plugin is enabled:"
+    );
+    println!("    set -g @plugin 'cruzluna/jkl-2'");
+    println!("    set -g @jkl_force_bind_keys 'on'");
+    println!("    run '~/.tmux/plugins/tpm/tpm'");
+    println!("  Then reload tmux. If TPM still needs to install the plugin, run:");
+    println!("    tmux run-shell \"~/.tmux/plugins/tpm/bin/install_plugins\"");
+    println!(
+        "  After reloading, open the list right away with <prefix> f (or your configured agent view key)."
+    );
 }
 
 #[cfg(test)]

@@ -20,6 +20,12 @@
 curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/install.sh | bash
 ```
 
+To test the installer without downloading or writing files:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cruzluna/jkl-2/master/install.sh | bash -s -- --dry-run
+```
+
 Optional: set `JKL_INSTALL_DIR` to choose where binaries are installed.
 On Linux, the installer picks:
 
@@ -30,6 +36,8 @@ On Linux, the installer picks:
 The installer adds:
 
 - `jkl`
+
+After install, the script prints copy/paste prompts for Claude Code hooks, Kiro CLI hooks, and the `~/.tmux.conf` lines needed for the `jkl-2` TPM plugin.
 
 ### Release Asset (manual)
 
@@ -94,6 +102,8 @@ Then refresh Fig autocomplete:
 ```
 jkl init fig-autocomplete
 ```
+
+`jkl update` also prints the same Claude Code/Kiro hook prompts and the `~/.tmux.conf` prompt after the update finishes.
 
 ## Uninstall
 
@@ -168,7 +178,7 @@ $ tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
 
 Default prefix bindings (only set when the key is currently unbound):
 
-- `f`: open `jkl tui` in a popup
+- `f`: open the agent view popup (`jkl tui`)
 - `W`: prompt for context and run `jkl upsert '#S' --session-id '#{session_id}' --context <input>`
 - `e`: open `~/.config/jkl/session_context.json` in `nvim`
 - `S`: open pane status selector popup
@@ -177,7 +187,7 @@ You can configure or disable each key:
 
 ```tmux
 # Set custom keys
-set -g @jkl_key_tui 'J'
+set -g @jkl_key_agent_view 'J'
 set -g @jkl_key_context 'C'
 set -g @jkl_key_edit 'E'
 set -g @jkl_key_pane_state 'P'
@@ -186,7 +196,7 @@ set -g @jkl_key_pane_state 'P'
 set -g @jkl_key_edit 'none'
 ```
 
-By default the plugin does not override existing tmux/user bindings. If you want it to force overrides, set:
+By default the plugin does not override existing tmux/user bindings. Recommended for a fresh setup: force the jkl defaults to bind even if tmux already has a key there:
 
 ```tmux
 set -g @jkl_force_bind_keys 'on'
