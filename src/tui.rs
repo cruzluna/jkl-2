@@ -30,21 +30,36 @@ pub enum TuiError {
     TerminalIo(#[from] io::Error),
 }
 
+fn backend_failure(source: impl std::fmt::Display) -> TuiError {
+    let message = source.to_string();
+    error!("tui backend failure: {message}");
+    TuiError::BackendFailure(message)
+}
+
+fn context_resolution_failure(source: impl std::fmt::Display) -> TuiError {
+    let message = source.to_string();
+    error!("tui context resolution failure: {message}");
+    TuiError::ContextResolutionFailure(message)
+}
+
+fn search_failure(message: String) -> TuiError {
+    error!("tui search failure: {message}");
+    TuiError::SearchFailure(message)
+}
+
 pub fn run() -> Result<(), TuiError> {
     info!("tui starting");
-    let sessions =
-        crate::tmux::list_sessions().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+    let sessions = crate::tmux::list_sessions().map_err(backend_failure)?;
     info!(
         "tui loaded {} tmux sessions: {:?}",
         sessions.len(),
         sessions
     );
 
-    let contexts = crate::context::load_contexts()
-        .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
+    let contexts = crate::context::load_contexts().map_err(context_resolution_failure)?;
     info!("tui loaded {} contexts", contexts.len());
 
-    let panes = crate::tmux::list_panes().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+    let panes = crate::tmux::list_panes().map_err(backend_failure)?;
     info!("tui loaded {} panes", panes.len());
 
     let items = build_sessions(sessions, contexts, panes);
@@ -229,8 +244,7 @@ impl SessionSearch for NucleoSessionSearch {
             let message = format!(
                 "search query exceeds matcher length limit ({query_codepoints} code points)"
             );
-            error!("{message}");
-            return Err(TuiError::SearchFailure(message));
+            return Err(search_failure(message));
         }
 
         if let Some(too_long) = candidates
@@ -241,8 +255,7 @@ impl SessionSearch for NucleoSessionSearch {
                 "search candidate {} exceeds matcher length limit",
                 too_long.id
             );
-            error!("{message}");
-            return Err(TuiError::SearchFailure(message));
+            return Err(search_failure(message));
         }
 
         let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
@@ -517,27 +530,21 @@ impl<S: SessionSearch> App<S> {
             match row {
                 RowItem::Session(session) => {
                     info!("tui switching to session_id={}", session.id);
-                    crate::tmux::switch_client(&session.id)
-                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                    crate::tmux::switch_client(&session.id).map_err(backend_failure)?;
                 }
                 RowItem::Window(window) => {
                     info!("tui switching to session_id={}", window.session_id);
-                    crate::tmux::switch_client(&window.session_id)
-                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
-                    crate::tmux::select_window(&window.id)
-                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                    crate::tmux::switch_client(&window.session_id).map_err(backend_failure)?;
+                    crate::tmux::select_window(&window.id).map_err(backend_failure)?;
                 }
                 RowItem::Pane(pane) => {
                     info!(
                         "tui switching to pane_id={} in session_id={} window_id={}",
                         pane.id, pane.session_id, pane.window_id
                     );
-                    crate::tmux::switch_client(&pane.session_id)
-                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
-                    crate::tmux::select_window(&pane.window_id)
-                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
-                    crate::tmux::select_pane(&pane.id)
-                        .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                    crate::tmux::switch_client(&pane.session_id).map_err(backend_failure)?;
+                    crate::tmux::select_window(&pane.window_id).map_err(backend_failure)?;
+                    crate::tmux::select_pane(&pane.id).map_err(backend_failure)?;
                 }
             }
         }
@@ -572,18 +579,15 @@ impl<S: SessionSearch> App<S> {
         match target {
             RowKey::Session(session_id) => {
                 info!("tui deleting session_id={}", session_id);
-                crate::tmux::kill_session(session_id)
-                    .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                crate::tmux::kill_session(session_id).map_err(backend_failure)?;
             }
             RowKey::Window { window_id, .. } => {
                 info!("tui deleting window_id={}", window_id);
-                crate::tmux::kill_window(window_id)
-                    .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                crate::tmux::kill_window(window_id).map_err(backend_failure)?;
             }
             RowKey::Pane { pane_id, .. } => {
                 info!("tui deleting pane_id={}", pane_id);
-                crate::tmux::kill_pane(pane_id)
-                    .map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+                crate::tmux::kill_pane(pane_id).map_err(backend_failure)?;
             }
         }
         self.reload_data()?;
@@ -636,11 +640,9 @@ impl<S: SessionSearch> App<S> {
     }
 
     fn refresh_panes(&mut self) -> Result<(), TuiError> {
-        let live_panes =
-            crate::tmux::list_panes().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+        let live_panes = crate::tmux::list_panes().map_err(backend_failure)?;
         let live_map = collect_live_panes(&live_panes);
-        crate::context::prune_panes(&live_map)
-            .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
+        crate::context::prune_panes(&live_map).map_err(context_resolution_failure)?;
         self.reload_data()?;
         Ok(())
     }
@@ -649,16 +651,13 @@ impl<S: SessionSearch> App<S> {
         info!("tui reload_data starting");
         let previous = self.selected_key();
 
-        let sessions =
-            crate::tmux::list_sessions().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+        let sessions = crate::tmux::list_sessions().map_err(backend_failure)?;
         info!("reload: loaded {} tmux sessions", sessions.len());
 
-        let contexts = crate::context::load_contexts()
-            .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
+        let contexts = crate::context::load_contexts().map_err(context_resolution_failure)?;
         info!("reload: loaded {} contexts", contexts.len());
 
-        let panes =
-            crate::tmux::list_panes().map_err(|e| TuiError::BackendFailure(e.to_string()))?;
+        let panes = crate::tmux::list_panes().map_err(backend_failure)?;
         info!("reload: loaded {} panes", panes.len());
 
         self.sessions = build_sessions(sessions, contexts, panes);
@@ -962,7 +961,7 @@ impl PaneSelector {
                                 status,
                                 None,
                             )
-                            .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
+                            .map_err(context_resolution_failure)?;
                         }
                         return Ok(());
                     }
@@ -1030,8 +1029,7 @@ fn current_pane_status(
     pane_id: &str,
     session_name: Option<&str>,
 ) -> Result<Option<crate::context::AgentStatus>, TuiError> {
-    let contexts = crate::context::load_contexts()
-        .map_err(|e| TuiError::ContextResolutionFailure(e.to_string()))?;
+    let contexts = crate::context::load_contexts().map_err(context_resolution_failure)?;
 
     if let Some(session_name) = session_name {
         return Ok(contexts
@@ -1929,5 +1927,22 @@ esac
 
         let log = fs::read_to_string(&log_path).expect("read log");
         assert_eq!(log, "switch-client:@1\nselect-window:@20\nselect-pane:%9\n");
+    }
+    #[test]
+    fn backend_failure_preserves_message() {
+        let error = backend_failure("boom");
+        assert_eq!(error.to_string(), "boom");
+    }
+
+    #[test]
+    fn context_resolution_failure_preserves_message() {
+        let error = context_resolution_failure("failed to load contexts");
+        assert_eq!(error.to_string(), "failed to load contexts");
+    }
+
+    #[test]
+    fn search_failure_preserves_message() {
+        let error = search_failure("query too long".to_string());
+        assert_eq!(error.to_string(), "Search failure: query too long");
     }
 }
