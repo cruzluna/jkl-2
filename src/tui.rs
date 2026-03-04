@@ -444,7 +444,11 @@ impl<S: SessionSearch> App<S> {
     }
 
     fn apply_search(&mut self) -> Result<(), TuiError> {
-        let previous = self.selected_key();
+        let previous = if self.search.query.trim().is_empty() {
+            self.selected_key()
+        } else {
+            None
+        };
         self.apply_search_with(previous)
     }
 
@@ -1580,6 +1584,44 @@ esac
 
         assert_eq!(app.filtered_sessions.len(), 1);
         assert_eq!(app.filtered_sessions[0].id, "@1");
+    }
+
+    #[test]
+    fn apply_search_prefers_first_match_over_previous_selection() {
+        let sessions = vec![
+            session_row("@1", "alpha"),
+            session_row("@2", "alpha-dev"),
+            session_row("@3", "alpha-prod"),
+        ];
+        let filter = StubSearch {
+            expected_query: Some("alpha-".to_string()),
+            matched_ids: vec!["@2".to_string(), "@3".to_string(), "@1".to_string()],
+        };
+        let mut app = App::new_with_filter(sessions, filter).expect("app");
+        app.state.select(Some(2));
+        app.search.query = "alpha-".to_string();
+
+        app.apply_search().expect("search");
+
+        match app.selected_row().expect("selected row") {
+            RowItem::Session(row) => assert_eq!(row.id, "@2"),
+            RowItem::Window(_) | RowItem::Pane(_) => panic!("expected session row"),
+        }
+    }
+
+    #[test]
+    fn apply_search_preserves_selection_when_query_empty() {
+        let sessions = vec![session_row("@1", "alpha"), session_row("@2", "beta")];
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        app.state.select(Some(1));
+        app.search.query.clear();
+
+        app.apply_search().expect("search");
+
+        match app.selected_row().expect("selected row") {
+            RowItem::Session(row) => assert_eq!(row.id, "@2"),
+            RowItem::Window(_) | RowItem::Pane(_) => panic!("expected session row"),
+        }
     }
 
     #[test]
