@@ -140,7 +140,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search first)
 - Navigate rows: `↑`/`↓` or `j`/`k`
 - Expand/collapse selected session details (windows + panes): `l`/`h`
-- Expand all session details: `L`
+- Toggle all session details (expand-all / collapse-all): `L`
 - Delete selected session/window/pane: `x`, then `x` to confirm (any other key cancels)
 - Refresh pane list: `r`
 - Search sessions/windows/panes: `/` (type to filter, `Esc` to exit search)

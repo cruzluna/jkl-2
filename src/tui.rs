@@ -16,7 +16,7 @@ use nucleo::{Config as NucleoConfig, Matcher as NucleoMatcher};
 const DATA_NOT_RECEIVED: &str = "-";
 // TODO: Will make this configurable in the future.
 const PANE_LABEL_MAX_WIDTH: usize = 10;
-const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (L) expand all | (x) delete selected | (r) refresh";
+const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (L) toggle all | (x) delete selected | (r) refresh";
 
 #[derive(Error, Debug)]
 pub enum TuiError {
@@ -386,8 +386,11 @@ impl<S: SessionSearch> App<S> {
                         KeyCode::Char('G') => {
                             self.select_last_session();
                         }
-                        KeyCode::Char('l') => self.expand_selected(),
                         KeyCode::Char('L') => self.expand_all(),
+                        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            self.expand_all();
+                        }
+                        KeyCode::Char('l') => self.expand_selected(),
                         KeyCode::Char('h') => self.collapse_selected(),
                         KeyCode::Char('x') => self.enter_delete_mode(),
                         KeyCode::Char('r') => {
@@ -632,11 +635,20 @@ impl<S: SessionSearch> App<S> {
 
     fn expand_all(&mut self) {
         let previous = self.selected_key();
-        self.expanded_sessions = self
-            .sessions
-            .iter()
-            .map(|session| session.id.clone())
-            .collect();
+        let all_expanded = !self.sessions.is_empty()
+            && self
+                .sessions
+                .iter()
+                .all(|session| self.expanded_sessions.contains(&session.id));
+        if all_expanded {
+            self.expanded_sessions.clear();
+        } else {
+            self.expanded_sessions = self
+                .sessions
+                .iter()
+                .map(|session| session.id.clone())
+                .collect();
+        }
         self.rebuild_rows();
         self.restore_selection(previous);
     }
@@ -1843,7 +1855,7 @@ esac
     }
 
     #[test]
-    fn expand_all_reveals_windows_and_panes_for_every_session() {
+    fn expand_all_toggles_between_expanded_and_collapsed() {
         let sessions = vec![
             session_with_window_and_pane(),
             SessionRow {
@@ -1877,6 +1889,11 @@ esac
         assert_eq!(app.rows.len(), 6);
         assert!(app.expanded_sessions.contains("@1"));
         assert!(app.expanded_sessions.contains("@2"));
+
+        app.expand_all();
+
+        assert_eq!(app.rows.len(), 2);
+        assert!(app.expanded_sessions.is_empty());
     }
 
     #[test]
