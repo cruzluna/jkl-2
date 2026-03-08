@@ -139,10 +139,11 @@ Each archive should contain the `jkl` binary at the top level.
 - Session rows are ordered by most recent tmux usage (most recent first)
 - Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search first)
 - Navigate rows: `↑`/`↓` or `j`/`k`
-- Expand/collapse session details (windows + panes): `l`/`h`
+- Expand/collapse selected session details (windows + panes): `l`/`h`
+- Expand all session details: `L`
 - Delete selected session/window/pane: `x`, then `x` to confirm (any other key cancels)
 - Refresh pane list: `r`
-- Search sessions: `/` (type to filter, `Esc` to exit search)
+- Search sessions/windows/panes: `/` (type to filter, `Esc` to exit search)
 - Switch to session: `Enter`
 - Upsert session metadata: `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
 - Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--window-id <window_id> [--window-name <window_name>]] [--status <status>] [--context <text...>]`
