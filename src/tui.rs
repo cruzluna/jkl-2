@@ -276,6 +276,7 @@ impl SessionSearch for NucleoSessionSearch {
 struct App<S: SessionSearch> {
     state: TableState,
     sessions: Vec<SessionRow>,
+    search_candidates: Vec<SearchCandidate>,
     filtered_sessions: Vec<SessionRow>,
     rows: Vec<RowItem>,
     session_index_by_id: HashMap<String, usize>,
@@ -298,10 +299,12 @@ impl<S: SessionSearch> App<S> {
     ///
     /// This keeps search behavior testable without heap allocation or dynamic dispatch.
     fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
+        let search_candidates = build_search_candidates(&sessions);
         let mut app = Self {
             state: TableState::default(),
             filtered_sessions: sessions.clone(),
             sessions,
+            search_candidates,
             rows: Vec::new(),
             session_index_by_id: HashMap::new(),
             widths: ColumnWidths {
@@ -464,13 +467,15 @@ impl<S: SessionSearch> App<S> {
             return Ok(());
         }
 
-        let candidates = build_search_candidates(&self.sessions);
         debug!(
             "tui applying search query={:?} against {} sessions",
             self.search.query,
-            candidates.len()
+            self.search_candidates.len()
         );
-        let matched_ids = match self.filter.filter_ids(&self.search.query, &candidates) {
+        let matched_ids = match self
+            .filter
+            .filter_ids(&self.search.query, &self.search_candidates)
+        {
             Ok(ids) => ids,
             Err(err) => {
                 error!("tui search failed for query={:?}: {err}", self.search.query);
@@ -689,6 +694,7 @@ impl<S: SessionSearch> App<S> {
         info!("reload: loaded {} panes", panes.len());
 
         self.sessions = build_sessions(sessions, contexts, panes);
+        self.search_candidates = build_search_candidates(&self.sessions);
         self.filtered_sessions = self.sessions.clone();
         self.rebuild_rows();
         self.apply_search_with(previous)?;
@@ -1083,44 +1089,51 @@ fn centered_rect_size(width: u16, height: u16, rect: Rect) -> Rect {
     Rect::new(x, y, width, height)
 }
 
+enum SearchNodeRef<'a> {
+    Session(&'a SessionRow),
+    Window(&'a WindowRow),
+    Pane(&'a PaneRow),
+}
+
 fn build_search_candidates(sessions: &[SessionRow]) -> Vec<SearchCandidate> {
-    sessions
-        .iter()
-        .map(|row| {
-            let mut search_text = format!(
-                "{}\t{}\t{}\t{}",
-                row.id,
-                row.name,
-                status_text(row.status.as_ref()),
-                row.context
-            );
+    sessions.iter().map(search_candidate_for_session).collect()
+}
 
-            for window in &row.windows {
-                search_text.push_str(&format!(
-                    "\t{}\t{}\t{}\t{}",
-                    window.id,
-                    window.name,
-                    status_text(window.status.as_ref()),
-                    window.context
-                ));
-
-                for pane in &window.panes {
-                    search_text.push_str(&format!(
-                        "\t{}\t{}\t{}\t{}",
-                        pane.id,
-                        pane.alias.as_deref().unwrap_or(""),
-                        status_text(pane.status.as_ref()),
-                        pane.context
-                    ));
+fn search_candidate_for_session(session: &SessionRow) -> SearchCandidate {
+    let mut fields = Vec::new();
+    let mut stack = vec![SearchNodeRef::Session(session)];
+    while let Some(node) = stack.pop() {
+        match node {
+            SearchNodeRef::Session(row) => {
+                fields.push(row.id.clone());
+                fields.push(row.name.clone());
+                fields.push(status_text(row.status.as_ref()));
+                fields.push(row.context.clone());
+                for window in row.windows.iter().rev() {
+                    stack.push(SearchNodeRef::Window(window));
                 }
             }
-
-            SearchCandidate {
-                id: row.id.clone(),
-                search_text,
+            SearchNodeRef::Window(row) => {
+                fields.push(row.id.clone());
+                fields.push(row.name.clone());
+                fields.push(status_text(row.status.as_ref()));
+                fields.push(row.context.clone());
+                for pane in row.panes.iter().rev() {
+                    stack.push(SearchNodeRef::Pane(pane));
+                }
             }
-        })
-        .collect()
+            SearchNodeRef::Pane(row) => {
+                fields.push(row.id.clone());
+                fields.push(row.alias.clone().unwrap_or_default());
+                fields.push(status_text(row.status.as_ref()));
+                fields.push(row.context.clone());
+            }
+        }
+    }
+    SearchCandidate {
+        id: session.id.clone(),
+        search_text: fields.join("\t"),
+    }
 }
 
 fn build_sessions(
@@ -1679,21 +1692,38 @@ esac
             name: "alpha".to_string(),
             status: None,
             context: "sctx".to_string(),
-            windows: vec![WindowRow {
-                id: "@10".to_string(),
-                name: "editor".to_string(),
-                status: Some(AgentStatus::Working),
-                context: "wctx".to_string(),
-                panes: vec![PaneRow {
-                    id: "%1".to_string(),
-                    window_id: "@10".to_string(),
-                    alias: Some("deploy-pane".to_string()),
-                    status: Some(AgentStatus::Waiting),
-                    context: "pctx".to_string(),
+            windows: vec![
+                WindowRow {
+                    id: "@10".to_string(),
+                    name: "editor".to_string(),
+                    status: Some(AgentStatus::Working),
+                    context: "wctx".to_string(),
+                    panes: vec![PaneRow {
+                        id: "%1".to_string(),
+                        window_id: "@10".to_string(),
+                        alias: Some("deploy-pane".to_string()),
+                        status: Some(AgentStatus::Waiting),
+                        context: "pctx".to_string(),
+                        session_id: "@1".to_string(),
+                    }],
                     session_id: "@1".to_string(),
-                }],
-                session_id: "@1".to_string(),
-            }],
+                },
+                WindowRow {
+                    id: "@11".to_string(),
+                    name: "server".to_string(),
+                    status: Some(AgentStatus::Done),
+                    context: "ops".to_string(),
+                    panes: vec![PaneRow {
+                        id: "%2".to_string(),
+                        window_id: "@11".to_string(),
+                        alias: Some("logs".to_string()),
+                        status: Some(AgentStatus::Working),
+                        context: "tail".to_string(),
+                        session_id: "@1".to_string(),
+                    }],
+                    session_id: "@1".to_string(),
+                },
+            ],
         }];
 
         let candidates = build_search_candidates(&sessions);
@@ -1703,6 +1733,9 @@ esac
         assert!(text.contains("editor"));
         assert!(text.contains("deploy-pane"));
         assert!(text.contains("pctx"));
+        assert!(text.contains("server"));
+        assert!(text.contains("logs"));
+        assert!(text.contains("tail"));
     }
 
     #[test]
