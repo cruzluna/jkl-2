@@ -17,6 +17,7 @@ const DATA_NOT_RECEIVED: &str = "-";
 // TODO: Will make this configurable in the future.
 const PANE_LABEL_MAX_WIDTH: usize = 10;
 const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (L) toggle all | (x) delete selected | (r) refresh";
+const INFO_TEXT_WITH_PANE_JUMP: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (p) pane jump | (l/h) expand/collapse | (L) toggle all | (x) delete selected | (r) refresh";
 
 #[derive(Error, Debug)]
 pub enum TuiError {
@@ -24,6 +25,8 @@ pub enum TuiError {
     BackendFailure(String),
     #[error("{0}")]
     ContextResolutionFailure(String),
+    #[error("{0}")]
+    ConfigFailure(String),
     #[error("Search failure: {0}")]
     SearchFailure(String),
     #[error("Terminal I/O error: {0}")]
@@ -42,6 +45,12 @@ fn context_resolution_failure(source: impl std::fmt::Display) -> TuiError {
     TuiError::ContextResolutionFailure(message)
 }
 
+fn config_failure(source: impl std::fmt::Display) -> TuiError {
+    let message = source.to_string();
+    error!("tui config failure: {message}");
+    TuiError::ConfigFailure(message)
+}
+
 fn search_failure(message: String) -> TuiError {
     error!("tui search failure: {message}");
     TuiError::SearchFailure(message)
@@ -49,6 +58,12 @@ fn search_failure(message: String) -> TuiError {
 
 pub fn run() -> Result<(), TuiError> {
     info!("tui starting");
+    let config = crate::config::load().map_err(config_failure)?;
+    info!(
+        "tui loaded config pane_jump_expanded={}",
+        config.tui.pane_jump_expanded
+    );
+
     let sessions = crate::tmux::list_sessions().map_err(backend_failure)?;
     info!(
         "tui loaded {} tmux sessions: {:?}",
@@ -65,7 +80,7 @@ pub fn run() -> Result<(), TuiError> {
     let items = build_sessions(sessions, contexts, panes);
     info!("tui built {} session rows", items.len());
 
-    let mut app = App::new(items)?;
+    let mut app = App::new(items, config.tui.pane_jump_expanded)?;
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
     ratatui::restore();
@@ -156,6 +171,11 @@ enum CommandMode {
     DeleteConfirm(RowKey),
 }
 
+struct PaneJumpState {
+    session_id: String,
+    pane_ids: Vec<String>,
+}
+
 impl RowItem {
     fn key(&self) -> RowKey {
         match self {
@@ -177,6 +197,8 @@ enum ListViewModes {
     NormalMode,
     /// Mode when searching for a session or pane
     SearchMode,
+    /// One-key pane jumps scoped to the selected session.
+    PaneJump(PaneJumpState),
     /// Mode for command confirmations (e.g. delete).
     CommandMode(CommandMode),
 }
@@ -284,13 +306,14 @@ struct App<S: SessionSearch> {
     search: SearchQuery,
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
+    pane_jump_enabled: bool,
     filter: S,
 }
 
 impl App<NucleoSessionSearch> {
     /// Creates a list view of sessions and panes
-    fn new(sessions: Vec<SessionRow>) -> Result<Self, TuiError> {
-        Self::new_with_filter(sessions, NucleoSessionSearch::new())
+    fn new(sessions: Vec<SessionRow>, pane_jump_enabled: bool) -> Result<Self, TuiError> {
+        Self::new_with_filter_and_options(sessions, NucleoSessionSearch::new(), pane_jump_enabled)
     }
 }
 
@@ -298,7 +321,16 @@ impl<S: SessionSearch> App<S> {
     /// Creates a list view with an injected search backend.
     ///
     /// This keeps search behavior testable without heap allocation or dynamic dispatch.
+    #[cfg(test)]
     fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
+        Self::new_with_filter_and_options(sessions, filter, false)
+    }
+
+    fn new_with_filter_and_options(
+        sessions: Vec<SessionRow>,
+        filter: S,
+        pane_jump_enabled: bool,
+    ) -> Result<Self, TuiError> {
         let search_candidates = build_search_candidates(&sessions);
         let mut app = Self {
             state: TableState::default(),
@@ -316,6 +348,7 @@ impl<S: SessionSearch> App<S> {
             },
             mode: ListViewModes::NormalMode,
             expanded_sessions: HashSet::new(),
+            pane_jump_enabled,
             filter,
         };
         app.rebuild_rows();
@@ -359,6 +392,8 @@ impl<S: SessionSearch> App<S> {
                     }
                 } else if matches!(self.mode, ListViewModes::CommandMode(_)) {
                     self.handle_command_mode_key(key.code)?;
+                } else if matches!(self.mode, ListViewModes::PaneJump(_)) {
+                    self.handle_pane_jump_key(key.code, key.modifiers);
                 } else {
                     // Normal mode keybindings
                     if let KeyCode::Char(c) = key.code
@@ -395,6 +430,7 @@ impl<S: SessionSearch> App<S> {
                         }
                         KeyCode::Char('l') => self.expand_selected(),
                         KeyCode::Char('h') => self.collapse_selected(),
+                        KeyCode::Char('p') => self.enter_pane_jump_mode(),
                         KeyCode::Char('x') => self.enter_delete_mode(),
                         KeyCode::Char('r') => {
                             info!("tui refresh requested");
@@ -448,6 +484,39 @@ impl<S: SessionSearch> App<S> {
 
     fn selected_key(&self) -> Option<RowKey> {
         self.selected_row().map(RowItem::key)
+    }
+
+    fn selected_session_id(&self) -> Option<String> {
+        self.selected_row().map(|row| match row {
+            RowItem::Session(session) => session.id.clone(),
+            RowItem::Window(window) => window.session_id.clone(),
+            RowItem::Pane(pane) => pane.session_id.clone(),
+        })
+    }
+
+    fn visible_pane_ids_for_session(&self, session_id: &str) -> Vec<String> {
+        self.rows
+            .iter()
+            .filter_map(|row| match row {
+                RowItem::Pane(pane) if pane.session_id == session_id => Some(pane.id.clone()),
+                RowItem::Session(_) | RowItem::Window(_) | RowItem::Pane(_) => None,
+            })
+            .collect()
+    }
+
+    fn pane_jump_label_for_row(&self, pane: &PaneRow) -> Option<String> {
+        let ListViewModes::PaneJump(state) = &self.mode else {
+            return None;
+        };
+        if pane.session_id != state.session_id {
+            return None;
+        }
+
+        let index = state
+            .pane_ids
+            .iter()
+            .position(|pane_id| pane_id == &pane.id)?;
+        pane_jump_label(index)
     }
 
     fn apply_search(&mut self) -> Result<(), TuiError> {
@@ -528,11 +597,11 @@ impl<S: SessionSearch> App<S> {
             self.state.select(None);
             return;
         }
-        if let Some(key) = previous {
-            if let Some(index) = self.rows.iter().position(|row| row.key() == key) {
-                self.state.select(Some(index));
-                return;
-            }
+        if let Some(key) = previous
+            && let Some(index) = self.rows.iter().position(|row| row.key() == key)
+        {
+            self.state.select(Some(index));
+            return;
         }
         self.state.select(Some(0));
     }
@@ -578,7 +647,9 @@ impl<S: SessionSearch> App<S> {
 
         let target = match &self.mode {
             ListViewModes::CommandMode(CommandMode::DeleteConfirm(target)) => Some(target.clone()),
-            ListViewModes::NormalMode | ListViewModes::SearchMode => None,
+            ListViewModes::NormalMode | ListViewModes::SearchMode | ListViewModes::PaneJump(_) => {
+                None
+            }
         };
         self.mode = ListViewModes::NormalMode;
 
@@ -610,7 +681,9 @@ impl<S: SessionSearch> App<S> {
     fn delete_prompt_text(&self) -> Option<String> {
         let target = match &self.mode {
             ListViewModes::CommandMode(CommandMode::DeleteConfirm(target)) => target,
-            ListViewModes::NormalMode | ListViewModes::SearchMode => return None,
+            ListViewModes::NormalMode | ListViewModes::SearchMode | ListViewModes::PaneJump(_) => {
+                return None;
+            }
         };
 
         let subject = match target {
@@ -669,6 +742,62 @@ impl<S: SessionSearch> App<S> {
             self.expanded_sessions.remove(&session_id);
             self.rebuild_rows();
             self.restore_selection(previous);
+        }
+    }
+
+    fn enter_pane_jump_mode(&mut self) {
+        if !self.pane_jump_enabled {
+            return;
+        }
+
+        let previous = self.selected_key();
+        let Some(session_id) = self.selected_session_id() else {
+            return;
+        };
+        self.expanded_sessions.insert(session_id.clone());
+        self.rebuild_rows();
+        self.restore_selection(previous);
+
+        let pane_ids = self.visible_pane_ids_for_session(&session_id);
+        if pane_ids.is_empty() {
+            return;
+        }
+
+        self.mode = ListViewModes::PaneJump(PaneJumpState {
+            session_id,
+            pane_ids,
+        });
+    }
+
+    fn handle_pane_jump_key(&mut self, key_code: KeyCode, modifiers: KeyModifiers) {
+        match key_code {
+            KeyCode::Esc => {
+                self.mode = ListViewModes::NormalMode;
+            }
+            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                self.mode = ListViewModes::NormalMode;
+            }
+            KeyCode::Char(c) => {
+                let target = match &self.mode {
+                    ListViewModes::PaneJump(state) => pane_jump_index(c)
+                        .and_then(|index| state.pane_ids.get(index).cloned())
+                        .map(|pane_id| (state.session_id.clone(), pane_id)),
+                    ListViewModes::NormalMode
+                    | ListViewModes::SearchMode
+                    | ListViewModes::CommandMode(_) => None,
+                };
+                self.mode = ListViewModes::NormalMode;
+
+                if let Some((session_id, pane_id)) = target
+                    && let Some(row_index) = self.rows.iter().position(|row| match row {
+                        RowItem::Pane(pane) => pane.session_id == session_id && pane.id == pane_id,
+                        RowItem::Session(_) | RowItem::Window(_) => false,
+                    })
+                {
+                    self.state.select(Some(row_index));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -776,12 +905,28 @@ impl<S: SessionSearch> App<S> {
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let sections = Layout::horizontal([Constraint::Min(1), Constraint::Length(9)]).split(area);
-        let footer_text = self
-            .delete_prompt_text()
-            .unwrap_or_else(|| INFO_TEXT.to_string());
+        let footer_text = if let Some(text) = self.delete_prompt_text() {
+            text
+        } else {
+            match &self.mode {
+                ListViewModes::PaneJump(_) => {
+                    "Pane jump: press 0-9/a-z to select pane; Esc cancels.".to_string()
+                }
+                ListViewModes::NormalMode
+                | ListViewModes::SearchMode
+                | ListViewModes::CommandMode(_) => {
+                    if self.pane_jump_enabled {
+                        INFO_TEXT_WITH_PANE_JUMP.to_string()
+                    } else {
+                        INFO_TEXT.to_string()
+                    }
+                }
+            }
+        };
         let footer = Paragraph::new(Text::from(footer_text));
         let mode = match &self.mode {
             ListViewModes::SearchMode => "[SEARCH]",
+            ListViewModes::PaneJump(_) => "[PANEJMP]",
             ListViewModes::CommandMode(_) => "[COMMAND]",
             ListViewModes::NormalMode => "[NORMAL]",
         };
@@ -799,7 +944,13 @@ impl<S: SessionSearch> App<S> {
                 .map(|index| format!("{}: {}", session_shortcut_label(*index), row.name))
                 .unwrap_or_else(|| row.name.clone()),
             RowItem::Window(row) => format!("  ◦ {}", row.name),
-            RowItem::Pane(row) => format!("    └─ {}", pane_label(row)),
+            RowItem::Pane(row) => {
+                if let Some(label) = self.pane_jump_label_for_row(row) {
+                    format!("    [{label}] {}", pane_label(row))
+                } else {
+                    format!("    └─ {}", pane_label(row))
+                }
+            }
         }
     }
 
@@ -1288,6 +1439,33 @@ fn meta_jump_index(c: char) -> Option<usize> {
     if offset < 26 { Some(10 + offset) } else { None }
 }
 
+fn pane_jump_index(c: char) -> Option<usize> {
+    if c.is_ascii_digit() {
+        return c.to_digit(10).map(|digit| digit as usize);
+    }
+
+    let lower = c.to_ascii_lowercase();
+    if !lower.is_ascii_alphabetic() {
+        return None;
+    }
+    let offset = (lower as u8).saturating_sub(b'a') as usize;
+    if offset < 26 { Some(10 + offset) } else { None }
+}
+
+fn pane_jump_label(index: usize) -> Option<String> {
+    if index < 10 {
+        return Some(index.to_string());
+    }
+
+    let letter_offset = index - 10;
+    if letter_offset < 26 {
+        let letter = (b'a' + letter_offset as u8) as char;
+        return Some(letter.to_string());
+    }
+
+    None
+}
+
 fn session_shortcut_label(index: usize) -> String {
     if index < 10 {
         return index.to_string();
@@ -1762,6 +1940,25 @@ esac
     }
 
     #[test]
+    fn pane_jump_index_maps_digits_and_letters() {
+        assert_eq!(pane_jump_index('0'), Some(0));
+        assert_eq!(pane_jump_index('9'), Some(9));
+        assert_eq!(pane_jump_index('a'), Some(10));
+        assert_eq!(pane_jump_index('z'), Some(35));
+        assert_eq!(pane_jump_index('A'), Some(10));
+        assert_eq!(pane_jump_index('-'), None);
+    }
+
+    #[test]
+    fn pane_jump_label_maps_first_36_entries() {
+        assert_eq!(pane_jump_label(0), Some("0".to_string()));
+        assert_eq!(pane_jump_label(9), Some("9".to_string()));
+        assert_eq!(pane_jump_label(10), Some("a".to_string()));
+        assert_eq!(pane_jump_label(35), Some("z".to_string()));
+        assert_eq!(pane_jump_label(36), None);
+    }
+
+    #[test]
     fn row_label_prefixes_session_index() {
         let sessions = vec![session_row("@1", "alpha"), session_row("@2", "beta")];
         let app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
@@ -1878,6 +2075,37 @@ esac
     }
 
     #[test]
+    fn pane_jump_mode_expands_selected_session_and_selects_pane() {
+        let sessions = vec![session_with_window_and_pane()];
+        let mut app =
+            App::new_with_filter_and_options(sessions, passthrough_filter(), true).expect("app");
+        assert_eq!(app.rows.len(), 1);
+
+        app.enter_pane_jump_mode();
+
+        assert!(matches!(app.mode, ListViewModes::PaneJump(_)));
+        assert_eq!(app.rows.len(), 3);
+        assert_eq!(app.row_label(&app.rows[2]), "    [0] %1");
+
+        app.handle_pane_jump_key(KeyCode::Char('0'), KeyModifiers::NONE);
+
+        assert!(matches!(app.mode, ListViewModes::NormalMode));
+        assert_eq!(app.state.selected(), Some(2));
+    }
+
+    #[test]
+    fn pane_jump_mode_is_ignored_when_feature_disabled() {
+        let sessions = vec![session_with_window_and_pane()];
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        assert_eq!(app.rows.len(), 1);
+
+        app.enter_pane_jump_mode();
+
+        assert!(matches!(app.mode, ListViewModes::NormalMode));
+        assert_eq!(app.rows.len(), 1);
+    }
+
+    #[test]
     fn expand_all_toggles_between_expanded_and_collapsed() {
         let sessions = vec![
             session_with_window_and_pane(),
@@ -1929,7 +2157,7 @@ esac
             ListViewModes::CommandMode(CommandMode::DeleteConfirm(RowKey::Session(session_id))) => {
                 assert_eq!(session_id, "@1");
             }
-            ListViewModes::NormalMode | ListViewModes::SearchMode => {
+            ListViewModes::NormalMode | ListViewModes::SearchMode | ListViewModes::PaneJump(_) => {
                 panic!("expected delete confirmation mode")
             }
             ListViewModes::CommandMode(CommandMode::DeleteConfirm(RowKey::Window { .. }))
@@ -2126,6 +2354,12 @@ esac
     fn context_resolution_failure_preserves_message() {
         let error = context_resolution_failure("failed to load contexts");
         assert_eq!(error.to_string(), "failed to load contexts");
+    }
+
+    #[test]
+    fn config_failure_preserves_message() {
+        let error = config_failure("invalid config");
+        assert_eq!(error.to_string(), "invalid config");
     }
 
     #[test]
