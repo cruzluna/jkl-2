@@ -1100,31 +1100,29 @@ fn search_candidate_for_session(session: &SessionRow) -> SearchCandidate {
         status_text(session.status.as_ref()),
         session.context.clone(),
     ];
-    let window_and_pane_fields = session.windows.iter().flat_map(|window| {
-        [
-            window.id.clone(),
-            window.name.clone(),
-            status_text(window.status.as_ref()),
-            window.context.clone(),
-        ]
-        .into_iter()
-        .chain(window.panes.iter().flat_map(|pane| {
-            [
-                pane.id.clone(),
-                pane.alias.clone().unwrap_or_default(),
-                status_text(pane.status.as_ref()),
-                pane.context.clone(),
-            ]
-            .into_iter()
-        }))
+
+    let window_fields = session.windows.iter().flat_map(|window| {
+        std::iter::once(window.id.clone())
+            .chain(std::iter::once(window.name.clone()))
+            .chain(std::iter::once(status_text(window.status.as_ref())))
+            .chain(std::iter::once(window.context.clone()))
+            .chain(window.panes.iter().flat_map(|pane| {
+                std::iter::once(pane.id.clone())
+                    .chain(std::iter::once(pane.alias.clone().unwrap_or_default()))
+                    .chain(std::iter::once(status_text(pane.status.as_ref())))
+                    .chain(std::iter::once(pane.context.clone()))
+            }))
     });
-    let fields: Vec<String> = session_fields
+
+    let search_text = session_fields
         .into_iter()
-        .chain(window_and_pane_fields)
-        .collect();
+        .chain(window_fields)
+        .collect::<Vec<_>>()
+        .join("\t");
+
     SearchCandidate {
         id: session.id.clone(),
-        search_text: fields.join("\t"),
+        search_text,
     }
 }
 
