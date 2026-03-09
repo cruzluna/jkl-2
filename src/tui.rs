@@ -616,9 +616,7 @@ impl<S: SessionSearch> App<S> {
 
         let target = match &self.mode {
             ListViewModes::CommandMode(CommandMode::DeleteConfirm(target)) => Some(target.clone()),
-            ListViewModes::NormalMode | ListViewModes::SearchMode | ListViewModes::HelpMode => {
-                None
-            }
+            ListViewModes::NormalMode | ListViewModes::SearchMode | ListViewModes::HelpMode => None,
         };
         self.mode = ListViewModes::NormalMode;
 
@@ -842,8 +840,16 @@ impl<S: SessionSearch> App<S> {
 
     fn render_help_overlay(&self, frame: &mut Frame) {
         let popup_area = frame.area();
-        let width = popup_area.width.saturating_mul(92).saturating_div(100).max(1);
-        let height = popup_area.height.saturating_mul(80).saturating_div(100).max(1);
+        let width = popup_area
+            .width
+            .saturating_mul(92)
+            .saturating_div(100)
+            .max(1);
+        let height = popup_area
+            .height
+            .saturating_mul(80)
+            .saturating_div(100)
+            .max(1);
         let area = centered_rect_size(width, height, popup_area);
         frame.render_widget(Clear, area);
 
@@ -2028,7 +2034,7 @@ esac
             ListViewModes::CommandMode(CommandMode::DeleteConfirm(RowKey::Session(session_id))) => {
                 assert_eq!(session_id, "@1");
             }
-            ListViewModes::NormalMode | ListViewModes::SearchMode => {
+            ListViewModes::NormalMode | ListViewModes::SearchMode | ListViewModes::HelpMode => {
                 panic!("expected delete confirmation mode")
             }
             ListViewModes::CommandMode(CommandMode::DeleteConfirm(RowKey::Window { .. }))
