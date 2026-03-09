@@ -1089,47 +1089,39 @@ fn centered_rect_size(width: u16, height: u16, rect: Rect) -> Rect {
     Rect::new(x, y, width, height)
 }
 
-enum SearchNodeRef<'a> {
-    Session(&'a SessionRow),
-    Window(&'a WindowRow),
-    Pane(&'a PaneRow),
-}
-
 fn build_search_candidates(sessions: &[SessionRow]) -> Vec<SearchCandidate> {
     sessions.iter().map(search_candidate_for_session).collect()
 }
 
 fn search_candidate_for_session(session: &SessionRow) -> SearchCandidate {
-    let mut fields = Vec::new();
-    let mut stack = vec![SearchNodeRef::Session(session)];
-    while let Some(node) = stack.pop() {
-        match node {
-            SearchNodeRef::Session(row) => {
-                fields.push(row.id.clone());
-                fields.push(row.name.clone());
-                fields.push(status_text(row.status.as_ref()));
-                fields.push(row.context.clone());
-                for window in row.windows.iter().rev() {
-                    stack.push(SearchNodeRef::Window(window));
-                }
-            }
-            SearchNodeRef::Window(row) => {
-                fields.push(row.id.clone());
-                fields.push(row.name.clone());
-                fields.push(status_text(row.status.as_ref()));
-                fields.push(row.context.clone());
-                for pane in row.panes.iter().rev() {
-                    stack.push(SearchNodeRef::Pane(pane));
-                }
-            }
-            SearchNodeRef::Pane(row) => {
-                fields.push(row.id.clone());
-                fields.push(row.alias.clone().unwrap_or_default());
-                fields.push(status_text(row.status.as_ref()));
-                fields.push(row.context.clone());
-            }
-        }
-    }
+    let session_fields = [
+        session.id.clone(),
+        session.name.clone(),
+        status_text(session.status.as_ref()),
+        session.context.clone(),
+    ];
+    let window_and_pane_fields = session.windows.iter().flat_map(|window| {
+        [
+            window.id.clone(),
+            window.name.clone(),
+            status_text(window.status.as_ref()),
+            window.context.clone(),
+        ]
+        .into_iter()
+        .chain(window.panes.iter().flat_map(|pane| {
+            [
+                pane.id.clone(),
+                pane.alias.clone().unwrap_or_default(),
+                status_text(pane.status.as_ref()),
+                pane.context.clone(),
+            ]
+            .into_iter()
+        }))
+    });
+    let fields: Vec<String> = session_fields
+        .into_iter()
+        .chain(window_and_pane_fields)
+        .collect();
     SearchCandidate {
         id: session.id.clone(),
         search_text: fields.join("\t"),
