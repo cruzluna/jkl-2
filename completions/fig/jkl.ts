@@ -34,6 +34,7 @@ const initPromptOptionSuggestions: Fig.Suggestion[] = [
   { name: "skills", description: "Skill prompts" },
   { name: "AGENTS.md", description: "AGENTS.md prompt" },
   { name: "tmux.conf", description: "tmux.conf prompt" },
+  { name: "examples", description: "Common jkl usage examples" },
 ];
 
 const sessionNameGenerator: Fig.Generator = {

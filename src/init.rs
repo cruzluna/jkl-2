@@ -26,6 +26,15 @@ const TMUX_CONF_LINES: [&str; 3] = [
     "set -g @jkl_force_bind_keys 'on'",
     "run '~/.tmux/plugins/tpm/tpm'",
 ];
+const PROMPT_USAGE_EXAMPLE_LINES: [&str; 7] = [
+    "Common jkl commands agents can run directly:",
+    "- Open the TUI: `jkl tui`",
+    "- Update current pane status: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working`",
+    "- Update current pane context: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --context \"triage auth bug\"`",
+    "- Update current session status + context: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --status waiting --context \"need review\"`",
+    "- Rename current session metadata entry: `jkl rename \"$(tmux display-message -p '#{session_id}')\" \"new session name\"`",
+    "- Remove stale metadata: `jkl sync`",
+];
 const AGENTS_MD_APPEND_LINES: [&str; 10] = [
     "## jkl",
     "- When working inside tmux, use `jkl upsert` to keep jkl metadata current.",
@@ -94,6 +103,8 @@ pub enum InitPromptOption {
     AgentsMd,
     #[value(name = "tmux.conf", alias = "tmux-conf", alias = "tmux_conf")]
     TmuxConf,
+    #[value(alias = "example", alias = "usage")]
+    Examples,
 }
 
 impl fmt::Display for InitPromptOption {
@@ -103,6 +114,7 @@ impl fmt::Display for InitPromptOption {
             Self::Skills => write!(f, "skills"),
             Self::AgentsMd => write!(f, "AGENTS.md"),
             Self::TmuxConf => write!(f, "tmux.conf"),
+            Self::Examples => write!(f, "examples"),
         }
     }
 }
@@ -285,6 +297,7 @@ fn render_prompts(provider: Option<InitTool>, option: Option<InitPromptOption>) 
             InitPromptOption::Skills,
             InitPromptOption::AgentsMd,
             InitPromptOption::TmuxConf,
+            InitPromptOption::Examples,
         ]
     });
 
@@ -315,6 +328,12 @@ fn render_prompts(provider: Option<InitTool>, option: Option<InitPromptOption>) 
                     .unwrap_or_else(|| ALL_PROMPT_TOOLS.to_vec());
                 sections.push(render_tmux_prompt(&tools));
             }
+            InitPromptOption::Examples => {
+                let tools = provider
+                    .map(|tool| vec![tool])
+                    .unwrap_or_else(|| ALL_PROMPT_TOOLS.to_vec());
+                sections.push(render_examples_prompt(&tools));
+            }
         }
     }
 
@@ -325,7 +344,9 @@ fn provider_supports_prompt_option(provider: InitTool, option: InitPromptOption)
     match option {
         InitPromptOption::Hooks => HOOK_PROMPT_TOOLS.contains(&provider),
         InitPromptOption::Skills => SKILL_PROMPT_TOOLS.contains(&provider),
-        InitPromptOption::AgentsMd | InitPromptOption::TmuxConf => true,
+        InitPromptOption::AgentsMd | InitPromptOption::TmuxConf | InitPromptOption::Examples => {
+            true
+        }
     }
 }
 
@@ -402,6 +423,14 @@ fn render_tmux_prompt(tools: &[InitTool]) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         "tmux run-shell \"~/.tmux/plugins/tpm/bin/install_plugins\""
+    )
+}
+
+fn render_examples_prompt(tools: &[InitTool]) -> String {
+    format!(
+        "Examples\n\nProviders: {}\n{}",
+        render_tool_list(tools),
+        PROMPT_USAGE_EXAMPLE_LINES.join("\n")
     )
 }
 
@@ -1218,7 +1247,19 @@ mod tests {
         assert!(rendered.contains("Skills"));
         assert!(rendered.contains("AGENTS.md"));
         assert!(rendered.contains("tmux.conf"));
+        assert!(rendered.contains("Examples"));
+        assert!(rendered.contains("jkl upsert"));
         assert!(!rendered.contains("Hooks"));
+    }
+
+    #[test]
+    fn render_examples_prompt_includes_live_tmux_identifiers() {
+        let rendered = render_prompts(Some(InitTool::Cursor), Some(InitPromptOption::Examples))
+            .expect("render prompts");
+        assert!(rendered.starts_with("Examples"));
+        assert!(rendered.contains("Providers: Cursor"));
+        assert!(rendered.contains("$(tmux display-message -p '#{pane_id}')"));
+        assert!(rendered.contains("jkl sync"));
     }
 
     #[test]

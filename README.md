@@ -157,7 +157,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Interactive integration setup: `jkl init`
 - Non-interactive hooks setup: `jkl init hooks --tool <claude|cursor|kiro> --scope <local|global> --non-interactive [--agent-config-dir <dir> (kiro only)] [--agent-config <path...> (kiro/cursor)]`
 - Non-interactive skills setup: `jkl init skills --tool <codex|claude|kiro> --scope <local|global> --non-interactive`
-- Non-interactive copy/paste prompts: `jkl init prompts [--provider <claude|codex|cursor|kiro>] [--option <hooks|skills|AGENTS.md|tmux.conf>]`
+- Non-interactive copy/paste prompts: `jkl init prompts [--provider <claude|codex|cursor|kiro>] [--option <hooks|skills|AGENTS.md|tmux.conf|examples>]`
 - Refresh Fig autocomplete: `jkl init fig-autocomplete`
 - Uninstall binary from current location: `jkl uninstall [--purge-data]`
 - Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
@@ -367,7 +367,7 @@ Codex skill paths:
 
 ### Copy/paste prompts
 
-Print the same copy/paste prompts shown by the installer and `jkl update`:
+Print the same copy/paste prompts shown by the installer and `jkl update`, plus common runnable `jkl` usage examples for agents:
 
 ```
 jkl init prompts
@@ -380,6 +380,7 @@ jkl init prompts --provider claude --option hooks
 jkl init prompts --provider codex --option skills
 jkl init prompts --option AGENTS.md
 jkl init prompts --option tmux.conf
+jkl init prompts --option examples
 ```
 
 ### Fig autocomplete

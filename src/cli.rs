@@ -615,4 +615,20 @@ esac
             _ => panic!("expected init prompts command"),
         }
     }
+
+    #[test]
+    fn parse_init_prompts_accepts_examples_value() {
+        let cli = Cli::try_parse_from(["jkl", "init", "prompts", "--option", "examples"])
+            .expect("parse init prompts");
+
+        match cli.command {
+            Commands::Init(InitArgs {
+                command: Some(InitCommands::Prompts(cmd)),
+            }) => {
+                assert_eq!(cmd.provider, None);
+                assert_eq!(cmd.option, Some(InitPromptOption::Examples));
+            }
+            _ => panic!("expected init prompts command"),
+        }
+    }
 }
