@@ -144,6 +144,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Delete selected session/window/pane: `x`, then `x` to confirm (any other key cancels)
 - Refresh pane list: `r`
 - Search sessions/windows/panes: `/` (type to filter, `Esc` to exit search)
+- Pane jump mode (optional): `p`, then `0-9`/`a-z` to jump to a pane in the selected session
 - Switch to session: `Enter`
 - Upsert session metadata: `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
 - Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--window-id <window_id> [--window-name <window_name>]] [--status <status>] [--context <text...>]`
@@ -395,6 +396,15 @@ jkl init fig-autocomplete
 ## Session Context
 
 The TUI reads optional metadata from `~/.config/jkl/session_context.json`. If the file does not exist, it is created with `{}` the first time you run the TUI.
+
+The TUI also reads `~/.config/jkl/jkl.toml` for feature flags. If the file does not exist, defaults are used and this is logged:
+
+```toml
+[tui]
+pane_jump_expanded = false
+```
+
+Set `pane_jump_expanded = true` to enable pane jump mode (`p`, then `0-9`/`a-z`) for expanded sessions.
 
 Shape (keyed by `blake3(session_name)`):
 
