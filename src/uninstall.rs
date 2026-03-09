@@ -2,14 +2,10 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const FIG_HELPER_NAME: &str = "jkl-sync-fig-autocomplete";
-
 #[derive(Debug)]
 struct UninstallSummary {
     binary_path: PathBuf,
-    helper_path: PathBuf,
     removed_binary: bool,
-    removed_helper: bool,
     removed_config: Option<bool>,
     config_path: Option<PathBuf>,
 }
@@ -30,12 +26,6 @@ pub fn run(purge_data: bool) -> Result<()> {
         println!("Removed {}", summary.binary_path.display());
     } else {
         println!("Binary already missing: {}", summary.binary_path.display());
-    }
-
-    if summary.removed_helper {
-        println!("Removed {}", summary.helper_path.display());
-    } else {
-        println!("Helper not found: {}", summary.helper_path.display());
     }
 
     if let Some(removed) = summary.removed_config {
@@ -59,15 +49,9 @@ fn uninstall_paths(
     purge_data: bool,
 ) -> Result<UninstallSummary> {
     let binary_path = exe_path.to_path_buf();
-    let parent = exe_path
-        .parent()
-        .context("resolve executable parent directory")?;
-    let helper_path = parent.join(FIG_HELPER_NAME);
 
     let removed_binary = remove_file_if_exists(&binary_path)
         .with_context(|| format!("remove binary at {}", binary_path.display()))?;
-    let removed_helper = remove_file_if_exists(&helper_path)
-        .with_context(|| format!("remove helper at {}", helper_path.display()))?;
 
     let (removed_config, config_path) = if purge_data {
         let home = home_dir.context("missing home directory for config cleanup")?;
@@ -81,9 +65,7 @@ fn uninstall_paths(
 
     Ok(UninstallSummary {
         binary_path,
-        helper_path,
         removed_binary,
-        removed_helper,
         removed_config,
         config_path,
     })
@@ -111,29 +93,24 @@ mod tests {
     use crate::test_utils::EnvGuard;
 
     #[test]
-    fn uninstall_paths_removes_binary_and_helper() {
+    fn uninstall_paths_removes_binary() {
         let env = EnvGuard::new("uninstall-remove-files");
         let exe = env.temp_dir().join("jkl");
-        let helper = env.temp_dir().join(FIG_HELPER_NAME);
 
         fs::write(&exe, "bin").expect("write exe");
-        fs::write(&helper, "helper").expect("write helper");
 
         let summary = uninstall_paths(&exe, None, false).expect("uninstall");
         assert!(summary.removed_binary);
-        assert!(summary.removed_helper);
         assert!(!exe.exists());
-        assert!(!helper.exists());
     }
 
     #[test]
-    fn uninstall_paths_handles_missing_files() {
+    fn uninstall_paths_handles_missing_binary() {
         let env = EnvGuard::new("uninstall-missing-files");
         let exe = env.temp_dir().join("jkl");
 
         let summary = uninstall_paths(&exe, None, false).expect("uninstall");
         assert!(!summary.removed_binary);
-        assert!(!summary.removed_helper);
     }
 
     #[test]

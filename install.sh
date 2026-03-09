@@ -3,36 +3,71 @@ set -euo pipefail
 
 BIN_NAME="jkl"
 REPO="cruzluna/jkl-2"
-SYNC_SCRIPT_NAME="jkl-sync-fig-autocomplete"
 INSTALL_DIR="${JKL_INSTALL_DIR:-$HOME/.local/bin}"
 INSTALL_TAG="${JKL_INSTALL_TAG:-latest}"
+DRY_RUN=false
 
-should_install_fig_helper() {
-  case "${JKL_INSTALL_FIG_COMPLETIONS:-}" in
-    y|Y|yes|YES|true|TRUE|1) return 0 ;;
-    n|N|no|NO|false|FALSE|0) return 1 ;;
-    "")
-      ;;
-    *)
-      echo "Invalid JKL_INSTALL_FIG_COMPLETIONS value: ${JKL_INSTALL_FIG_COMPLETIONS}" >&2
-      echo "Expected one of: y/n, yes/no, true/false, 1/0" >&2
-      return 1
-      ;;
+if [[ -t 1 ]]; then
+  MUTED='\033[0;2m'
+  RED='\033[0;31m'
+  ORANGE='\033[38;5;214m'
+  NC='\033[0m'
+else
+  MUTED=''
+  RED=''
+  ORANGE=''
+  NC=''
+fi
+
+usage() {
+  cat <<EOF
+jkl Installer
+
+Usage: install.sh [options]
+
+Options:
+  -h, --help      Show this help message
+      --dry-run   Print what would be installed without downloading or writing files
+
+Examples:
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/master/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/master/install.sh | bash -s -- --dry-run
+  JKL_INSTALL_DIR=/tmp/jkl-test ./install.sh --dry-run
+EOF
+}
+
+print_message() {
+  local level="$1"
+  local message="$2"
+  local color="$NC"
+
+  case "$level" in
+    info) color="$NC" ;;
+    muted) color="$MUTED" ;;
+    accent) color="$ORANGE" ;;
+    error) color="$RED" ;;
   esac
 
-  if [[ -e /dev/tty ]]; then
-    while true; do
-      read -r -p "Install Fig autocomplete helper (${SYNC_SCRIPT_NAME})? [y/n]: " answer </dev/tty
-      case "$answer" in
-        y|Y) return 0 ;;
-        n|N) return 1 ;;
-        *) echo "Please answer y or n." ;;
-      esac
-    done
-  fi
-
-  return 1
+  printf "%b%s%b\n" "$color" "$message" "$NC"
 }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    *)
+      print_message error "Unknown option: $1"
+      usage
+      exit 1
+      ;;
+  esac
+done
 
 is_amazon_linux_2() {
   if [[ -r /etc/os-release ]]; then
@@ -49,7 +84,6 @@ is_amazon_linux_2() {
 
   return 1
 }
-
 uname_s="$(uname -s)"
 uname_m="$(uname -m)"
 
@@ -105,28 +139,67 @@ fi
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-echo "Downloading $url"
-curl -fsSL "$url" -o "$tmp_dir/$archive"
-tar -xzf "$tmp_dir/$archive" -C "$tmp_dir"
-
-mkdir -p "$INSTALL_DIR"
-mv "$tmp_dir/$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
-chmod +x "$INSTALL_DIR/$BIN_NAME"
-
-echo "Installed $BIN_NAME to $INSTALL_DIR/$BIN_NAME"
-
-sync_script_url="https://raw.githubusercontent.com/${REPO}/master/scripts/sync-fig-autocomplete.sh"
-if should_install_fig_helper; then
-  if curl -fsSL "$sync_script_url" -o "$INSTALL_DIR/$SYNC_SCRIPT_NAME"; then
-    chmod +x "$INSTALL_DIR/$SYNC_SCRIPT_NAME"
-    echo "Installed $SYNC_SCRIPT_NAME to $INSTALL_DIR/$SYNC_SCRIPT_NAME"
-  else
-    echo "Warning: failed to install $SYNC_SCRIPT_NAME from $sync_script_url" >&2
+if [[ "$DRY_RUN" == "true" ]]; then
+  print_message accent "jkl installer dry run"
+  print_message info "Resolved target: $target${asset_suffix}"
+  print_message info "Archive: $archive"
+  print_message info "Download URL: $url"
+  print_message info "Install destination: $INSTALL_DIR/$BIN_NAME"
+  if ! command -v "$BIN_NAME" >/dev/null 2>&1; then
+    print_message info "PATH reminder: make sure $INSTALL_DIR is on your PATH."
   fi
 else
-  echo "Skipped $SYNC_SCRIPT_NAME installation."
+  print_message accent "Installing jkl"
+  print_message info "Downloading $url"
+  curl -fsSL "$url" -o "$tmp_dir/$archive"
+  tar -xzf "$tmp_dir/$archive" -C "$tmp_dir"
+
+  mkdir -p "$INSTALL_DIR"
+  mv "$tmp_dir/$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
+  chmod +x "$INSTALL_DIR/$BIN_NAME"
+
+  print_message info "Installed $BIN_NAME to $INSTALL_DIR/$BIN_NAME"
+
+  if ! command -v "$BIN_NAME" >/dev/null 2>&1; then
+    print_message info "Make sure $INSTALL_DIR is on your PATH."
+  fi
 fi
 
-if ! command -v "$BIN_NAME" >/dev/null 2>&1; then
-  echo "Make sure $INSTALL_DIR is on your PATH."
+printf "\n"
+if [[ "$DRY_RUN" == "true" ]]; then
+  print_message info "Dry run complete. No files were downloaded or modified."
+else
+  print_message info "jkl is installed and ready."
 fi
+printf "\n"
+
+WORKING_HOOK_COMMAND='[ -n "$TMUX" ] || exit 0; jkl upsert "$(tmux display-message -p '"'"'#S'"'"')" --session-id "$(tmux display-message -p '"'"'#{session_id}'"'"')" --pane-id "$(tmux display-message -p '"'"'#{pane_id}'"'"')" --status working'
+WAITING_HOOK_COMMAND='[ -n "$TMUX" ] || exit 0; jkl upsert "$(tmux display-message -p '"'"'#S'"'"')" --session-id "$(tmux display-message -p '"'"'#{session_id}'"'"')" --pane-id "$(tmux display-message -p '"'"'#{pane_id}'"'"')" --status waiting'
+
+print_message accent "Helpful next steps ✨"
+printf "\n"
+
+print_message accent "Claude Code prompt"
+print_message muted "Paste this into Claude Code to mark the current tmux pane as working when you send a prompt, and waiting when Claude stops."
+print_message muted "UserPromptSubmit:"
+print_message info "$WORKING_HOOK_COMMAND"
+print_message muted "Stop:"
+print_message info "$WAITING_HOOK_COMMAND"
+printf "\n"
+
+print_message accent "Kiro CLI prompt"
+print_message muted "Paste this into Kiro CLI to mark the current tmux pane as working when you send a prompt, and waiting when Kiro stops."
+print_message muted "userPromptSubmit:"
+print_message info "$WORKING_HOOK_COMMAND"
+print_message muted "stop:"
+print_message info "$WAITING_HOOK_COMMAND"
+printf "\n"
+
+print_message accent "tmux setup prompt"
+print_message muted "Paste this into your agent to update ~/.tmux.conf so the jkl-2 tmux plugin is enabled:"
+print_message info "set -g @plugin 'cruzluna/jkl-2'"
+print_message info "set -g @jkl_force_bind_keys 'on'"
+print_message info "run '~/.tmux/plugins/tpm/tpm'"
+print_message muted "Then reload tmux. If TPM still needs to install the plugin, run:"
+print_message info "tmux run-shell \"~/.tmux/plugins/tpm/bin/install_plugins\""
+print_message muted "After reloading, open the list right away with <prefix> f (or your configured agent view key)."

@@ -1,6 +1,6 @@
 [package]
 name = "jkl"
-version = "0.1.2"
+version = "0.1.6"
 edition = "2024"
 
 [dependencies]
@@ -17,3 +17,5 @@ anyhow = "1.0.100"
 flexi_logger = "0.31.8"
 log = "0.4.28"
 self_update = { version = "0.39.0", default-features = false, features = ["archive-tar", "compression-flate2", "rustls"] }
+inquire = "0.9.1"
+nucleo = "0.5.0"

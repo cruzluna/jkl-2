@@ -5,6 +5,37 @@ const statusSuggestions: Fig.Suggestion[] = [
   { name: "none", description: "Clear status / no explicit status" },
 ];
 
+const initToolHooksSuggestions: Fig.Suggestion[] = [
+  { name: "claude", description: "Initialize Claude Code hooks" },
+  { name: "cursor", description: "Initialize Cursor hooks" },
+  { name: "kiro", description: "Initialize Kiro CLI hooks" },
+];
+
+const initToolSkillsSuggestions: Fig.Suggestion[] = [
+  { name: "codex", description: "Initialize Codex skills" },
+  { name: "claude", description: "Initialize Claude skills" },
+  { name: "kiro", description: "Initialize Kiro skills" },
+];
+
+const initScopeSuggestions: Fig.Suggestion[] = [
+  { name: "local", description: "Write config in the current project" },
+  { name: "global", description: "Write config under your HOME directory" },
+];
+
+const initPromptProviderSuggestions: Fig.Suggestion[] = [
+  { name: "claude", description: "Claude Code prompts" },
+  { name: "codex", description: "Codex prompts" },
+  { name: "cursor", description: "Cursor CLI prompts" },
+  { name: "kiro", description: "Kiro CLI prompts" },
+];
+
+const initPromptOptionSuggestions: Fig.Suggestion[] = [
+  { name: "hooks", description: "Hook prompts" },
+  { name: "skills", description: "Skill prompts" },
+  { name: "AGENTS.md", description: "AGENTS.md prompt" },
+  { name: "tmux.conf", description: "tmux.conf prompt" },
+];
+
 const sessionNameGenerator: Fig.Generator = {
   script: 'tmux list-sessions -F "#{session_name}" 2>/dev/null',
   postProcess: (output) =>
@@ -207,6 +238,107 @@ const completionSpec: Fig.Spec = {
     {
       name: "sync",
       description: "Sync stored metadata with current tmux sessions and panes",
+    },
+    {
+      name: "init",
+      description: "Set up integrations and print copy/paste prompts",
+      subcommands: [
+        {
+          name: "hooks",
+          description: "Initialize Claude, Cursor, or Kiro hooks",
+          options: [
+            {
+              name: "--tool",
+              description: "Target integration tool",
+              args: {
+                name: "tool",
+                suggestions: initToolHooksSuggestions,
+              },
+            },
+            {
+              name: "--scope",
+              description: "Where to write hook configuration",
+              args: {
+                name: "scope",
+                suggestions: initScopeSuggestions,
+              },
+            },
+            {
+              name: "--agent-config-dir",
+              description:
+                "Directory to scan for Kiro agent config files during selection (does not update all files automatically)",
+              args: {
+                name: "dir",
+              },
+            },
+            {
+              name: "--agent-config",
+              description:
+                "Explicit hook config file path(s) to update (Kiro or Cursor)",
+              args: {
+                name: "path",
+                isVariadic: true,
+              },
+            },
+            {
+              name: "--non-interactive",
+              description: "Fail instead of prompting for missing options",
+            },
+          ],
+        },
+        {
+          name: "skills",
+          description: "Initialize Codex, Claude, or Kiro skills",
+          options: [
+            {
+              name: "--tool",
+              description: "Target integration tool",
+              args: {
+                name: "tool",
+                suggestions: initToolSkillsSuggestions,
+              },
+            },
+            {
+              name: "--scope",
+              description: "Where to write skill configuration",
+              args: {
+                name: "scope",
+                suggestions: initScopeSuggestions,
+              },
+            },
+            {
+              name: "--non-interactive",
+              description: "Fail instead of prompting for missing options",
+            },
+          ],
+        },
+        {
+          name: "prompts",
+          description: "Print copy/paste prompts for integrations",
+          options: [
+            {
+              name: "--provider",
+              description: "Filter prompts by integration provider",
+              args: {
+                name: "provider",
+                suggestions: initPromptProviderSuggestions,
+              },
+            },
+            {
+              name: "--option",
+              description: "Filter prompts by prompt type",
+              args: {
+                name: "option",
+                suggestions: initPromptOptionSuggestions,
+              },
+            },
+          ],
+        },
+        {
+          name: "fig-autocomplete",
+          description: "Sync jkl spec into Fig and build autocomplete",
+        },
+      ],
     },
     {
       name: "update",
