@@ -16,7 +16,7 @@ use nucleo::{Config as NucleoConfig, Matcher as NucleoMatcher};
 const DATA_NOT_RECEIVED: &str = "-";
 // TODO: Will make this configurable in the future.
 const PANE_LABEL_MAX_WIDTH: usize = 10;
-const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (x) delete selected | (r) refresh";
+const INFO_TEXT: &str = "(Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (L) toggle all | (x) delete selected | (r) refresh";
 
 #[derive(Error, Debug)]
 pub enum TuiError {
@@ -276,6 +276,7 @@ impl SessionSearch for NucleoSessionSearch {
 struct App<S: SessionSearch> {
     state: TableState,
     sessions: Vec<SessionRow>,
+    search_candidates: Vec<SearchCandidate>,
     filtered_sessions: Vec<SessionRow>,
     rows: Vec<RowItem>,
     session_index_by_id: HashMap<String, usize>,
@@ -298,10 +299,12 @@ impl<S: SessionSearch> App<S> {
     ///
     /// This keeps search behavior testable without heap allocation or dynamic dispatch.
     fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
+        let search_candidates = build_search_candidates(&sessions);
         let mut app = Self {
             state: TableState::default(),
             filtered_sessions: sessions.clone(),
             sessions,
+            search_candidates,
             rows: Vec::new(),
             session_index_by_id: HashMap::new(),
             widths: ColumnWidths {
@@ -386,6 +389,10 @@ impl<S: SessionSearch> App<S> {
                         KeyCode::Char('G') => {
                             self.select_last_session();
                         }
+                        KeyCode::Char('L') => self.expand_all(),
+                        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            self.expand_all();
+                        }
                         KeyCode::Char('l') => self.expand_selected(),
                         KeyCode::Char('h') => self.collapse_selected(),
                         KeyCode::Char('x') => self.enter_delete_mode(),
@@ -460,13 +467,15 @@ impl<S: SessionSearch> App<S> {
             return Ok(());
         }
 
-        let candidates = build_search_candidates(&self.sessions);
         debug!(
             "tui applying search query={:?} against {} sessions",
             self.search.query,
-            candidates.len()
+            self.search_candidates.len()
         );
-        let matched_ids = match self.filter.filter_ids(&self.search.query, &candidates) {
+        let matched_ids = match self
+            .filter
+            .filter_ids(&self.search.query, &self.search_candidates)
+        {
             Ok(ids) => ids,
             Err(err) => {
                 error!("tui search failed for query={:?}: {err}", self.search.query);
@@ -629,6 +638,26 @@ impl<S: SessionSearch> App<S> {
         }
     }
 
+    fn expand_all(&mut self) {
+        let previous = self.selected_key();
+        let all_expanded = !self.sessions.is_empty()
+            && self
+                .sessions
+                .iter()
+                .all(|session| self.expanded_sessions.contains(&session.id));
+        if all_expanded {
+            self.expanded_sessions.clear();
+        } else {
+            self.expanded_sessions = self
+                .sessions
+                .iter()
+                .map(|session| session.id.clone())
+                .collect();
+        }
+        self.rebuild_rows();
+        self.restore_selection(previous);
+    }
+
     fn collapse_selected(&mut self) {
         let previous = self.selected_key();
         let session_id = self.selected_row().map(|row| match row {
@@ -665,6 +694,7 @@ impl<S: SessionSearch> App<S> {
         info!("reload: loaded {} panes", panes.len());
 
         self.sessions = build_sessions(sessions, contexts, panes);
+        self.search_candidates = build_search_candidates(&self.sessions);
         self.filtered_sessions = self.sessions.clone();
         self.rebuild_rows();
         self.apply_search_with(previous)?;
@@ -1060,19 +1090,40 @@ fn centered_rect_size(width: u16, height: u16, rect: Rect) -> Rect {
 }
 
 fn build_search_candidates(sessions: &[SessionRow]) -> Vec<SearchCandidate> {
-    sessions
-        .iter()
-        .map(|row| SearchCandidate {
-            id: row.id.clone(),
-            search_text: format!(
-                "{}\t{}\t{}\t{}",
-                row.id,
-                row.name,
-                status_text(row.status.as_ref()),
-                row.context
-            ),
-        })
-        .collect()
+    sessions.iter().map(search_candidate_for_session).collect()
+}
+
+fn search_candidate_for_session(session: &SessionRow) -> SearchCandidate {
+    let session_fields = [
+        session.id.clone(),
+        session.name.clone(),
+        status_text(session.status.as_ref()),
+        session.context.clone(),
+    ];
+
+    let window_fields = session.windows.iter().flat_map(|window| {
+        std::iter::once(window.id.clone())
+            .chain(std::iter::once(window.name.clone()))
+            .chain(std::iter::once(status_text(window.status.as_ref())))
+            .chain(std::iter::once(window.context.clone()))
+            .chain(window.panes.iter().flat_map(|pane| {
+                std::iter::once(pane.id.clone())
+                    .chain(std::iter::once(pane.alias.clone().unwrap_or_default()))
+                    .chain(std::iter::once(status_text(pane.status.as_ref())))
+                    .chain(std::iter::once(pane.context.clone()))
+            }))
+    });
+
+    let search_text = session_fields
+        .into_iter()
+        .chain(window_fields)
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    SearchCandidate {
+        id: session.id.clone(),
+        search_text,
+    }
 }
 
 fn build_sessions(
@@ -1625,6 +1676,59 @@ esac
     }
 
     #[test]
+    fn build_search_candidates_include_window_and_pane_fields() {
+        let sessions = vec![SessionRow {
+            id: "@1".to_string(),
+            name: "alpha".to_string(),
+            status: None,
+            context: "sctx".to_string(),
+            windows: vec![
+                WindowRow {
+                    id: "@10".to_string(),
+                    name: "editor".to_string(),
+                    status: Some(AgentStatus::Working),
+                    context: "wctx".to_string(),
+                    panes: vec![PaneRow {
+                        id: "%1".to_string(),
+                        window_id: "@10".to_string(),
+                        alias: Some("deploy-pane".to_string()),
+                        status: Some(AgentStatus::Waiting),
+                        context: "pctx".to_string(),
+                        session_id: "@1".to_string(),
+                    }],
+                    session_id: "@1".to_string(),
+                },
+                WindowRow {
+                    id: "@11".to_string(),
+                    name: "server".to_string(),
+                    status: Some(AgentStatus::Done),
+                    context: "ops".to_string(),
+                    panes: vec![PaneRow {
+                        id: "%2".to_string(),
+                        window_id: "@11".to_string(),
+                        alias: Some("logs".to_string()),
+                        status: Some(AgentStatus::Working),
+                        context: "tail".to_string(),
+                        session_id: "@1".to_string(),
+                    }],
+                    session_id: "@1".to_string(),
+                },
+            ],
+        }];
+
+        let candidates = build_search_candidates(&sessions);
+        assert_eq!(candidates.len(), 1);
+        let text = &candidates[0].search_text;
+        assert!(text.contains("alpha"));
+        assert!(text.contains("editor"));
+        assert!(text.contains("deploy-pane"));
+        assert!(text.contains("pctx"));
+        assert!(text.contains("server"));
+        assert!(text.contains("logs"));
+        assert!(text.contains("tail"));
+    }
+
+    #[test]
     fn nucleo_session_search_supports_fuzzy_filtering() {
         let mut search = NucleoSessionSearch::new();
         let candidates = vec![
@@ -1771,6 +1875,48 @@ esac
             RowItem::Session(row) => assert_eq!(row.id, "@2"),
             RowItem::Window(_) | RowItem::Pane(_) => panic!("expected session row"),
         }
+    }
+
+    #[test]
+    fn expand_all_toggles_between_expanded_and_collapsed() {
+        let sessions = vec![
+            session_with_window_and_pane(),
+            SessionRow {
+                id: "@2".to_string(),
+                name: "beta".to_string(),
+                status: None,
+                context: "ctx".to_string(),
+                windows: vec![WindowRow {
+                    id: "@20".to_string(),
+                    name: "server".to_string(),
+                    status: None,
+                    context: "wctx".to_string(),
+                    panes: vec![PaneRow {
+                        id: "%2".to_string(),
+                        window_id: "@20".to_string(),
+                        alias: None,
+                        status: None,
+                        context: "pctx".to_string(),
+                        session_id: "@2".to_string(),
+                    }],
+                    session_id: "@2".to_string(),
+                }],
+            },
+        ];
+
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        assert_eq!(app.rows.len(), 2);
+
+        app.expand_all();
+
+        assert_eq!(app.rows.len(), 6);
+        assert!(app.expanded_sessions.contains("@1"));
+        assert!(app.expanded_sessions.contains("@2"));
+
+        app.expand_all();
+
+        assert_eq!(app.rows.len(), 2);
+        assert!(app.expanded_sessions.is_empty());
     }
 
     #[test]
