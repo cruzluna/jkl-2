@@ -137,7 +137,9 @@ Each archive should contain the `jkl` binary at the top level.
 
 - Launch the TUI: `jkl tui`
 - Session rows are ordered by most recent tmux usage (most recent first)
-- Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search first)
+- Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search/help first)
+- Open keybinding help: `?`
+- In help mode, return to list view: `q`, `Q`, `Esc`, or `Ctrl+C`
 - Navigate rows: `↑`/`↓` or `j`/`k`
 - Expand/collapse selected session details (windows + panes): `l`/`h`
 - Toggle all session details (expand-all / collapse-all): `L`
