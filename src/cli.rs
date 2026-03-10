@@ -7,6 +7,46 @@ use crate::context::{AgentStatus, ContextError};
 use crate::init::{InitPromptOption, InitScope, InitTool};
 use crate::tui::TuiError;
 
+const UPSERT_LONG_ABOUT: &str = "Upsert session or pane metadata used by jkl.
+
+Session upsert:
+  Use session name (+ optional --session-id) to update session status/context.
+
+Pane upsert:
+  Include --pane-id to update a specific pane entry inside a session.
+  Add --window-id/--window-name and --pane-name when you want labels.";
+
+const UPSERT_AFTER_HELP: &str = "TMUX field helpers:
+  session display name: tmux display-message -p '#S'
+  session id:           tmux display-message -p '#{session_id}'
+  pane id:              tmux display-message -p '#{pane_id}'
+  window id:            tmux display-message -p '#{window_id}'
+  window name:          tmux display-message -p '#W'
+
+Examples:
+  # Session status/context from current tmux session
+  jkl upsert \"$(tmux display-message -p '#S')\" \\
+    --session-id \"$(tmux display-message -p '#{session_id}')\" \\
+    --status working --context \"triage auth\"
+
+  # Pane status from current tmux pane
+  jkl upsert \"$(tmux display-message -p '#S')\" \\
+    --session-id \"$(tmux display-message -p '#{session_id}')\" \\
+    --pane-id \"$(tmux display-message -p '#{pane_id}')\" \\
+    --status waiting
+
+  # Pane labels + short context
+  jkl upsert \"$(tmux display-message -p '#S')\" \\
+    --session-id \"$(tmux display-message -p '#{session_id}')\" \\
+    --pane-id \"$(tmux display-message -p '#{pane_id}')\" \\
+    --window-id \"$(tmux display-message -p '#{window_id}')\" \\
+    --window-name \"$(tmux display-message -p '#W')\" \\
+    --pane-name \"planner\" --context \"review PR\"
+
+Keep context short:
+  Prefer 2-6 words (labels, intent, next action).
+  Use status for state and context for terse notes.";
+
 #[derive(Parser)]
 #[command(name = "jkl", version)]
 struct Cli {
@@ -17,6 +57,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Tui(TuiArgs),
+    #[command(long_about = UPSERT_LONG_ABOUT, after_help = UPSERT_AFTER_HELP)]
     Upsert(UpsertArgs),
     Rename(RenameArgs),
     Sync,
@@ -41,20 +82,28 @@ struct TuiArgs {
 
 #[derive(Args)]
 struct UpsertArgs {
+    /// Session display name (supports multiple words).
     #[arg(num_args = 1..)]
     session_name: Vec<String>,
+    /// Stable tmux session id (for rename-safe matching), e.g. @1.
     #[arg(long)]
     session_id: Option<String>,
+    /// Tmux pane id for pane-level upserts, e.g. %3.
     #[arg(long)]
     pane_id: Option<String>,
+    /// Tmux window id for pane/window metadata, e.g. @10.
     #[arg(long)]
     window_id: Option<String>,
+    /// Human-readable window label (requires --window-id).
     #[arg(long, requires = "window_id")]
     window_name: Option<String>,
+    /// Human-readable pane label (set once, then reuse).
     #[arg(long)]
     pane_name: Option<String>,
+    /// One of: working, waiting, done, none.
     #[arg(long)]
     status: Option<String>,
+    /// Short context note (prefer a few words).
     #[arg(long, num_args = 1..)]
     context: Option<Vec<String>>,
 }
@@ -317,6 +366,7 @@ mod tests {
     use super::*;
     use crate::context::{AgentStatus, load_contexts, session_key};
     use crate::test_utils::EnvGuard;
+    use clap::CommandFactory;
     #[cfg(unix)]
     use std::fs;
     #[cfg(unix)]
@@ -474,6 +524,69 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn handle_upsert_pane_status_does_not_mutate_session_context() {
+        let mut env = EnvGuard::new("cli-upsert-pane-preserves-session-context");
+        env.set_temp_home();
+
+        crate::context::upsert_session(
+            "Alpha".to_string(),
+            Some("@1".to_string()),
+            Some(AgentStatus::Done),
+            Some("keep session ctx".to_string()),
+        )
+        .expect("seed session");
+        crate::context::upsert_pane(
+            "Alpha",
+            "%1",
+            None,
+            None,
+            None,
+            Some(AgentStatus::Working),
+            Some("keep pane ctx".to_string()),
+        )
+        .expect("seed pane");
+
+        let args = UpsertArgs {
+            session_name: vec!["Alpha".to_string()],
+            session_id: Some("@1".to_string()),
+            pane_id: Some("%1".to_string()),
+            window_id: None,
+            window_name: None,
+            pane_name: None,
+            status: Some("waiting".to_string()),
+            context: None,
+        };
+        handle_upsert(args).expect("upsert pane status");
+
+        let contexts = load_contexts().expect("load contexts");
+        let session = contexts.get(&session_key("Alpha")).expect("session exists");
+        assert_eq!(session.session_context.as_deref(), Some("keep session ctx"));
+        assert_eq!(session.session_status, Some(AgentStatus::Done));
+
+        let pane = session.panes.get("%1").expect("pane exists");
+        assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
+        assert_eq!(pane.pane_context.as_deref(), Some("keep pane ctx"));
+    }
+
+    #[test]
+    fn upsert_help_includes_tmux_examples_and_context_guidance() {
+        let mut cmd = Cli::command();
+        let upsert = cmd
+            .find_subcommand_mut("upsert")
+            .expect("upsert subcommand exists");
+        let mut rendered = Vec::new();
+        upsert
+            .write_long_help(&mut rendered)
+            .expect("render upsert help");
+        let help = String::from_utf8(rendered).expect("utf8 help");
+
+        assert!(help.contains("tmux display-message -p '#S'"));
+        assert!(help.contains("tmux display-message -p '#{session_id}'"));
+        assert!(help.contains("--pane-id"));
+        assert!(help.contains("Keep context short"));
     }
 
     #[test]
