@@ -43,6 +43,13 @@ Examples:
     --window-name \"$(tmux display-message -p '#W')\" \\
     --pane-name \"planner\" --context \"review PR\"
 
+  # Window label + pane context only (no status change)
+  jkl upsert \"$(tmux display-message -p '#S')\" \\
+    --session-id \"$(tmux display-message -p '#{session_id}')\" \\
+    --pane-id \"$(tmux display-message -p '#{pane_id}')\" \\
+    --window-id \"$(tmux display-message -p '#{window_id}')\" \\
+    --window-name \"research\" --context \"handoff\"
+
 Keep context short:
   Prefer 2-6 words (labels, intent, next action).
   Use status for state and context for terse notes.";
@@ -572,6 +579,61 @@ mod tests {
     }
 
     #[test]
+    fn handle_upsert_window_name_and_context_only_updates_expected_fields() {
+        let mut env = EnvGuard::new("cli-upsert-window-name-context-only");
+        env.set_temp_home();
+
+        crate::context::upsert_session(
+            "Alpha".to_string(),
+            Some("@1".to_string()),
+            Some(AgentStatus::Done),
+            Some("session ctx".to_string()),
+        )
+        .expect("seed session");
+        crate::context::upsert_pane(
+            "Alpha",
+            "%1",
+            Some("@10".to_string()),
+            Some("editor".to_string()),
+            Some("planner".to_string()),
+            Some(AgentStatus::Working),
+            Some("old pane ctx".to_string()),
+        )
+        .expect("seed pane");
+
+        let args = UpsertArgs {
+            session_name: vec!["Alpha".to_string()],
+            session_id: Some("@1".to_string()),
+            pane_id: Some("%1".to_string()),
+            window_id: Some("@10".to_string()),
+            window_name: Some("research".to_string()),
+            pane_name: None,
+            status: None,
+            context: Some(vec![
+                "new".to_string(),
+                "pane".to_string(),
+                "ctx".to_string(),
+            ]),
+        };
+        handle_upsert(args).expect("upsert window name + context");
+
+        let contexts = load_contexts().expect("load contexts");
+        let session = contexts.get(&session_key("Alpha")).expect("session exists");
+        assert_eq!(session.session_context.as_deref(), Some("session ctx"));
+        assert_eq!(session.session_status, Some(AgentStatus::Done));
+
+        let pane = session.panes.get("%1").expect("pane exists");
+        assert_eq!(pane.window_id.as_deref(), Some("@10"));
+        assert_eq!(pane.window_name.as_deref(), Some("research"));
+        assert_eq!(pane.pane_context.as_deref(), Some("new pane ctx"));
+        assert_eq!(pane.pane_name.as_deref(), Some("planner"));
+        assert_eq!(pane.pane_status, Some(AgentStatus::Working));
+
+        let window = session.windows.get("@10").expect("window exists");
+        assert_eq!(window.window_name.as_deref(), Some("research"));
+    }
+
+    #[test]
     fn upsert_help_includes_tmux_examples_and_context_guidance() {
         let mut cmd = Cli::command();
         let upsert = cmd
@@ -587,6 +649,7 @@ mod tests {
         assert!(help.contains("tmux display-message -p '#{session_id}'"));
         assert!(help.contains("--pane-id"));
         assert!(help.contains("Keep context short"));
+        assert!(help.contains("Window label + pane context only"));
     }
 
     #[test]
