@@ -527,6 +527,51 @@ mod tests {
     }
 
     #[test]
+    fn handle_upsert_pane_status_does_not_mutate_session_context() {
+        let mut env = EnvGuard::new("cli-upsert-pane-preserves-session-context");
+        env.set_temp_home();
+
+        crate::context::upsert_session(
+            "Alpha".to_string(),
+            Some("@1".to_string()),
+            Some(AgentStatus::Done),
+            Some("keep session ctx".to_string()),
+        )
+        .expect("seed session");
+        crate::context::upsert_pane(
+            "Alpha",
+            "%1",
+            None,
+            None,
+            None,
+            Some(AgentStatus::Working),
+            Some("keep pane ctx".to_string()),
+        )
+        .expect("seed pane");
+
+        let args = UpsertArgs {
+            session_name: vec!["Alpha".to_string()],
+            session_id: Some("@1".to_string()),
+            pane_id: Some("%1".to_string()),
+            window_id: None,
+            window_name: None,
+            pane_name: None,
+            status: Some("waiting".to_string()),
+            context: None,
+        };
+        handle_upsert(args).expect("upsert pane status");
+
+        let contexts = load_contexts().expect("load contexts");
+        let session = contexts.get(&session_key("Alpha")).expect("session exists");
+        assert_eq!(session.session_context.as_deref(), Some("keep session ctx"));
+        assert_eq!(session.session_status, Some(AgentStatus::Done));
+
+        let pane = session.panes.get("%1").expect("pane exists");
+        assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
+        assert_eq!(pane.pane_context.as_deref(), Some("keep pane ctx"));
+    }
+
+    #[test]
     fn upsert_help_includes_tmux_examples_and_context_guidance() {
         let mut cmd = Cli::command();
         let upsert = cmd
