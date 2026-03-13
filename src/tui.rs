@@ -16,10 +16,13 @@ use nucleo::{Config as NucleoConfig, Matcher as NucleoMatcher};
 const DATA_NOT_RECEIVED: &str = "-";
 // TODO: Will make this configurable in the future.
 const PANE_LABEL_MAX_WIDTH: usize = 10;
-const INFO_TEXT: &str = "(?) help | (Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (L) toggle all | (x) delete selected | (r) refresh";
+const PREVIEW_CAPTURE_LINES: usize = 120;
+const PREVIEW_DEFAULT_TEXT: &str =
+    "Preview is off. Press 'p' to toggle live pane preview for the selected row.";
+const INFO_TEXT: &str = "(?) help | (Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (L) toggle all | (p) preview | (x) delete selected | (r) refresh";
 const HELP_FEEDBACK_TEXT: &str =
     "Feedback: create an issue at https://github.com/cruzluna/jkl-2/issues";
-const HELP_BINDINGS: [(&str, &str, &str); 19] = [
+const HELP_BINDINGS: [(&str, &str, &str); 20] = [
     ("Normal", "q / Esc / Ctrl-C", "Quit list view"),
     ("Normal", "?", "Open this help"),
     ("Normal", "/", "Search sessions/windows/panes"),
@@ -30,6 +33,7 @@ const HELP_BINDINGS: [(&str, &str, &str); 19] = [
     ("Normal", "Opt-a..z", "Jump to session index 10-35"),
     ("Normal", "l / h", "Expand/collapse selected session"),
     ("Normal", "L", "Toggle all sessions expanded/collapsed"),
+    ("Normal", "p", "Toggle live pane preview"),
     ("Normal", "x", "Start delete confirmation"),
     ("Normal", "r", "Refresh pane list"),
     ("Search", "type / Backspace", "Filter sessions"),
@@ -231,6 +235,11 @@ struct SearchCandidate {
     search_text: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PreviewTarget {
+    pane_id: String,
+}
+
 impl AsRef<str> for SearchCandidate {
     fn as_ref(&self) -> &str {
         &self.search_text
@@ -309,6 +318,10 @@ struct App<S: SessionSearch> {
     search: SearchQuery,
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
+    preview_enabled: bool,
+    preview_target_pane_id: Option<String>,
+    preview_title: String,
+    preview_text: String,
     filter: S,
 }
 
@@ -341,6 +354,10 @@ impl<S: SessionSearch> App<S> {
             },
             mode: ListViewModes::NormalMode,
             expanded_sessions: HashSet::new(),
+            preview_enabled: false,
+            preview_target_pane_id: None,
+            preview_title: "Pane Preview".to_string(),
+            preview_text: PREVIEW_DEFAULT_TEXT.to_string(),
             filter,
         };
         app.rebuild_rows();
@@ -433,6 +450,7 @@ impl<S: SessionSearch> App<S> {
                         }
                         KeyCode::Char('l') => self.expand_selected(),
                         KeyCode::Char('h') => self.collapse_selected(),
+                        KeyCode::Char('p') => self.toggle_preview(),
                         KeyCode::Char('x') => self.enter_delete_mode(),
                         KeyCode::Char('r') => {
                             info!("tui refresh requested");
@@ -738,6 +756,9 @@ impl<S: SessionSearch> App<S> {
         self.filtered_sessions = self.sessions.clone();
         self.rebuild_rows();
         self.apply_search_with(previous)?;
+        if self.preview_enabled {
+            self.sync_preview_to_selection(true);
+        }
         info!(
             "tui reloaded {} sessions, {} rows",
             self.sessions.len(),
@@ -754,7 +775,16 @@ impl<S: SessionSearch> App<S> {
         ]);
         let sections = layout.split(frame.area());
         self.render_search(frame, sections[0]);
-        self.render_table(frame, sections[1]);
+        if self.preview_enabled {
+            self.sync_preview_to_selection(false);
+            let split =
+                Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)])
+                    .split(sections[1]);
+            self.render_table(frame, split[0]);
+            self.render_preview(frame, split[1]);
+        } else {
+            self.render_table(frame, sections[1]);
+        }
         self.render_footer(frame, sections[2]);
         if matches!(self.mode, ListViewModes::HelpMode) {
             self.render_help_overlay(frame);
@@ -836,6 +866,17 @@ impl<S: SessionSearch> App<S> {
 
         frame.render_widget(footer, sections[0]);
         frame.render_widget(mode_widget, sections[1]);
+    }
+
+    fn render_preview(&self, frame: &mut Frame, area: Rect) {
+        let preview = Paragraph::new(Text::from(self.preview_text.clone()))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(&self.preview_title),
+            )
+            .wrap(Wrap { trim: false });
+        frame.render_widget(preview, area);
     }
 
     fn render_help_overlay(&self, frame: &mut Frame) {
@@ -1028,6 +1069,75 @@ impl<S: SessionSearch> App<S> {
             RowItem::Window(_) | RowItem::Pane(_) => false,
         }) {
             self.state.select(Some(row_index));
+        }
+    }
+
+    fn toggle_preview(&mut self) {
+        self.preview_enabled = !self.preview_enabled;
+        if self.preview_enabled {
+            self.sync_preview_to_selection(true);
+        } else {
+            self.preview_target_pane_id = None;
+            self.preview_title = "Pane Preview".to_string();
+            self.preview_text = PREVIEW_DEFAULT_TEXT.to_string();
+        }
+    }
+
+    fn sync_preview_to_selection(&mut self, force: bool) {
+        if !self.preview_enabled {
+            return;
+        }
+
+        let target = self.preview_target_for_selected_row();
+        let target_id = target.as_ref().map(|target| target.pane_id.clone());
+        if !force && self.preview_target_pane_id == target_id {
+            return;
+        }
+
+        self.preview_target_pane_id = target_id.clone();
+
+        let Some(target) = target else {
+            self.preview_title = "Pane Preview".to_string();
+            self.preview_text = "No pane available for the current selection.".to_string();
+            return;
+        };
+
+        self.preview_title = format!("Pane {}", target.pane_id);
+        match crate::tmux::capture_pane(&target.pane_id, PREVIEW_CAPTURE_LINES) {
+            Ok(text) => {
+                self.preview_text = if text.trim().is_empty() {
+                    "(pane is empty)".to_string()
+                } else {
+                    text
+                };
+            }
+            Err(error) => {
+                error!(
+                    "tui preview capture failed pane_id={} error={error}",
+                    target.pane_id
+                );
+                self.preview_text =
+                    format!("Unable to capture pane {}.\n{}", target.pane_id, error);
+            }
+        }
+    }
+
+    fn preview_target_for_selected_row(&self) -> Option<PreviewTarget> {
+        match self.selected_row() {
+            Some(RowItem::Pane(row)) => Some(PreviewTarget {
+                pane_id: row.id.clone(),
+            }),
+            Some(RowItem::Window(row)) => row.panes.first().map(|pane| PreviewTarget {
+                pane_id: pane.id.clone(),
+            }),
+            Some(RowItem::Session(row)) => row
+                .windows
+                .iter()
+                .find_map(|window| window.panes.first())
+                .map(|pane| PreviewTarget {
+                    pane_id: pane.id.clone(),
+                }),
+            None => None,
         }
     }
 }
@@ -1494,6 +1604,50 @@ mod tests {
                 }],
                 session_id: "@1".to_string(),
             }],
+        }
+    }
+
+    fn session_with_sparse_windows_for_preview() -> SessionRow {
+        SessionRow {
+            id: "@1".to_string(),
+            name: "alpha".to_string(),
+            status: None,
+            context: "ctx".to_string(),
+            windows: vec![
+                WindowRow {
+                    id: "@10".to_string(),
+                    name: "empty".to_string(),
+                    status: None,
+                    context: "wctx".to_string(),
+                    panes: Vec::new(),
+                    session_id: "@1".to_string(),
+                },
+                WindowRow {
+                    id: "@20".to_string(),
+                    name: "editor".to_string(),
+                    status: None,
+                    context: "wctx".to_string(),
+                    panes: vec![
+                        PaneRow {
+                            id: "%9".to_string(),
+                            window_id: "@20".to_string(),
+                            alias: None,
+                            status: None,
+                            context: "pctx".to_string(),
+                            session_id: "@1".to_string(),
+                        },
+                        PaneRow {
+                            id: "%10".to_string(),
+                            window_id: "@20".to_string(),
+                            alias: None,
+                            status: None,
+                            context: "pctx".to_string(),
+                            session_id: "@1".to_string(),
+                        },
+                    ],
+                    session_id: "@1".to_string(),
+                },
+            ],
         }
     }
 
@@ -1980,6 +2134,54 @@ esac
             RowItem::Session(row) => assert_eq!(row.id, "@2"),
             RowItem::Window(_) | RowItem::Pane(_) => panic!("expected session row"),
         }
+    }
+
+    #[test]
+    fn preview_is_disabled_by_default() {
+        let sessions = vec![session_row("@1", "alpha")];
+        let app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        assert!(!app.preview_enabled);
+        assert_eq!(app.preview_text, PREVIEW_DEFAULT_TEXT);
+    }
+
+    #[test]
+    fn preview_target_for_pane_row_uses_selected_pane() {
+        let sessions = vec![session_with_window_and_pane()];
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+        app.state.select(Some(2));
+
+        let target = app
+            .preview_target_for_selected_row()
+            .expect("preview target");
+        assert_eq!(target.pane_id, "%1");
+    }
+
+    #[test]
+    fn preview_target_for_window_row_uses_first_pane() {
+        let sessions = vec![session_with_sparse_windows_for_preview()];
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+        app.state.select(Some(2));
+
+        let target = app
+            .preview_target_for_selected_row()
+            .expect("preview target");
+        assert_eq!(target.pane_id, "%9");
+    }
+
+    #[test]
+    fn preview_target_for_session_row_uses_first_available_pane() {
+        let sessions = vec![session_with_sparse_windows_for_preview()];
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        app.state.select(Some(0));
+
+        let target = app
+            .preview_target_for_selected_row()
+            .expect("preview target");
+        assert_eq!(target.pane_id, "%9");
     }
 
     #[test]

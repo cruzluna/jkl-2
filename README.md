@@ -143,6 +143,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Navigate rows: `↑`/`↓` or `j`/`k`
 - Expand/collapse selected session details (windows + panes): `l`/`h`
 - Toggle all session details (expand-all / collapse-all): `L`
+- Toggle live pane preview panel: `p` (off by default)
 - Delete selected session/window/pane: `x`, then `x` to confirm (any other key cancels)
 - Refresh pane list: `r`
 - Search sessions/windows/panes: `/` (type to filter, `Esc` to exit search)

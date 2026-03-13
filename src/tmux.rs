@@ -225,6 +225,28 @@ pub fn kill_pane(target: &str) -> Result<(), io::Error> {
     Ok(())
 }
 
+pub fn capture_pane(target: &str, lines: usize) -> Result<String, io::Error> {
+    let lines = lines.max(1);
+    let start = format!("-{lines}");
+    let output = Command::new("tmux")
+        .args(["capture-pane", "-p", "-t", target, "-S", start.as_str()])
+        .output()?;
+    if !output.status.success() {
+        let err = tmux_status_error("capture-pane", output.status, &output.stderr);
+        debug!("tmux capture-pane failed target={target} error={err}");
+        return Err(err);
+    }
+
+    let captured = String::from_utf8_lossy(&output.stdout).to_string();
+    debug!(
+        "tmux capture-pane target={} lines={} bytes={}",
+        target,
+        lines,
+        captured.len()
+    );
+    Ok(captured)
+}
+
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
@@ -275,6 +297,14 @@ case "$1" in
       echo "${TMUX_SELECT_PANE_ERR:-error}" 1>&2
       exit 1
     fi
+    exit 0
+    ;;
+  capture-pane)
+    if [ "${TMUX_CAPTURE_PANE_EXIT:-0}" -ne 0 ]; then
+      echo "${TMUX_CAPTURE_PANE_ERR:-error}" 1>&2
+      exit "${TMUX_CAPTURE_PANE_EXIT}"
+    fi
+    printf "%s" "${TMUX_CAPTURE_PANE:-}"
     exit 0
     ;;
   *)
@@ -454,6 +484,32 @@ esac
         assert_eq!(
             err.to_string(),
             "tmux select-window failed (exit code 1): no window"
+        );
+    }
+
+    #[test]
+    fn capture_pane_returns_captured_text() {
+        let mut env = EnvGuard::new("tmux-capture-pane-ok");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_CAPTURE_PANE", "line one\nline two\n");
+        env.remove_var("TMUX_CAPTURE_PANE_EXIT");
+
+        let text = capture_pane("%1", 25).expect("capture pane");
+        assert_eq!(text, "line one\nline two\n");
+    }
+
+    #[test]
+    fn capture_pane_returns_error_on_failure() {
+        let mut env = EnvGuard::new("tmux-capture-pane-error");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_CAPTURE_PANE_EXIT", "1");
+        env.set_var("TMUX_CAPTURE_PANE_ERR", "pane not found");
+
+        let err = capture_pane("%404", 25).expect_err("expected error");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(
+            err.to_string(),
+            "tmux capture-pane failed (exit code 1): pane not found"
         );
     }
 }
