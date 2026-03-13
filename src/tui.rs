@@ -873,7 +873,7 @@ impl<S: SessionSearch> App<S> {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(&self.preview_title),
+                    .title(self.preview_title.as_str()),
             )
             .wrap(Wrap { trim: false });
         frame.render_widget(preview, area);
