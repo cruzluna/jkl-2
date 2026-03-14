@@ -143,7 +143,7 @@ Each archive should contain the `jkl` binary at the top level.
 - Navigate rows: `↑`/`↓` or `j`/`k`
 - Expand/collapse selected session details (windows + panes): `l`/`h`
 - Toggle all session details (expand-all / collapse-all): `L`
-- Toggle live pane preview panel: `p` (off by default)
+- Toggle live pane preview: `p` (off by default; tmux popup launcher opens external side preview)
 - Delete selected session/window/pane: `x`, then `x` to confirm (any other key cancels)
 - Refresh pane list: `r`
 - Search sessions/windows/panes: `/` (type to filter, `Esc` to exit search)
@@ -183,7 +183,7 @@ $ tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
 
 Default prefix bindings (only set when the key is currently unbound):
 
-- `f`: open the agent view popup (`jkl tui`)
+- `f`: open the agent view popup (`jkl tui`); press `p` to toggle tmux side preview
 - `W`: prompt for context and run `jkl upsert '#S' --session-id '#{session_id}' --context <input>`
 - `e`: open `~/.config/jkl/session_context.json` in `nvim`
 - `S`: open pane status selector popup

@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use crate::context::{AgentStatus, ContextError};
 use crate::init::{InitPromptOption, InitScope, InitTool};
-use crate::tui::TuiError;
+use crate::tui::{TuiError, TuiExit};
+
+const TOGGLE_PREVIEW_EXIT_CODE: i32 = 42;
 
 const UPSERT_LONG_ABOUT: &str = "Upsert session or pane metadata used by jkl.
 
@@ -57,6 +59,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Tui(TuiArgs),
+    Preview(PreviewArgs),
     #[command(long_about = UPSERT_LONG_ABOUT, after_help = UPSERT_AFTER_HELP)]
     Upsert(UpsertArgs),
     Rename(RenameArgs),
@@ -78,6 +81,22 @@ struct TuiArgs {
     /// The ID of the pane to open the status selector popup for
     #[arg(long)]
     pane_id: Option<String>,
+    /// Path to a pane target file written by the list view for external previews.
+    #[arg(long, hide = true)]
+    preview_target_file: Option<PathBuf>,
+    /// Enable tmux-managed external preview orchestration.
+    #[arg(long, hide = true)]
+    external_preview: bool,
+}
+
+#[derive(Args)]
+struct PreviewArgs {
+    /// File path written by the list view containing the current pane id.
+    #[arg(long)]
+    target_file: PathBuf,
+    /// Number of lines captured from tmux for each refresh.
+    #[arg(long, default_value_t = 120)]
+    lines: usize,
 }
 
 #[derive(Args)]
@@ -194,6 +213,10 @@ pub fn run() -> Result<()> {
             info!("command=tui");
             handle_tui(args)?
         }
+        Commands::Preview(args) => {
+            info!("command=preview");
+            handle_preview(args)?
+        }
         Commands::Upsert(args) => {
             info!("command=upsert");
             handle_upsert(args)?
@@ -236,7 +259,16 @@ fn handle_tui(args: TuiArgs) -> Result<(), TuiError> {
         );
     }
     info!("tui requested");
-    crate::tui::run()
+    match crate::tui::run(args.preview_target_file, args.external_preview)? {
+        TuiExit::Quit => Ok(()),
+        TuiExit::ToggleExternalPreview => {
+            std::process::exit(TOGGLE_PREVIEW_EXIT_CODE);
+        }
+    }
+}
+
+fn handle_preview(args: PreviewArgs) -> Result<(), crate::preview::PreviewError> {
+    crate::preview::run_follow(&args.target_file, args.lines)
 }
 
 fn handle_upsert(args: UpsertArgs) -> Result<(), ContextError> {
@@ -726,6 +758,30 @@ esac
                 assert_eq!(cmd.option, Some(InitPromptOption::AgentsMd));
             }
             _ => panic!("expected init prompts command"),
+        }
+    }
+
+    #[test]
+    fn parse_preview_command_with_target_file_and_lines() {
+        let cli = Cli::try_parse_from([
+            "jkl",
+            "preview",
+            "--target-file",
+            "/tmp/jkl-preview-target",
+            "--lines",
+            "80",
+        ])
+        .expect("parse preview command");
+
+        match cli.command {
+            Commands::Preview(args) => {
+                assert_eq!(
+                    args.target_file,
+                    std::path::PathBuf::from("/tmp/jkl-preview-target")
+                );
+                assert_eq!(args.lines, 80);
+            }
+            _ => panic!("expected preview command"),
         }
     }
 }

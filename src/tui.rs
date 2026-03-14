@@ -5,7 +5,9 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io;
+use std::path::PathBuf;
 use thiserror::Error;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -57,6 +59,12 @@ pub enum TuiError {
     TerminalIo(#[from] io::Error),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TuiExit {
+    Quit,
+    ToggleExternalPreview,
+}
+
 fn backend_failure(source: impl std::fmt::Display) -> TuiError {
     let message = source.to_string();
     error!("tui backend failure: {message}");
@@ -74,7 +82,10 @@ fn search_failure(message: String) -> TuiError {
     TuiError::SearchFailure(message)
 }
 
-pub fn run() -> Result<(), TuiError> {
+pub fn run(
+    preview_target_file: Option<PathBuf>,
+    external_preview: bool,
+) -> Result<TuiExit, TuiError> {
     info!("tui starting");
     let sessions = crate::tmux::list_sessions().map_err(backend_failure)?;
     info!(
@@ -93,6 +104,8 @@ pub fn run() -> Result<(), TuiError> {
     info!("tui built {} session rows", items.len());
 
     let mut app = App::new(items)?;
+    app.preview_target_file = preview_target_file;
+    app.external_preview = external_preview;
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
     ratatui::restore();
@@ -318,6 +331,9 @@ struct App<S: SessionSearch> {
     search: SearchQuery,
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
+    external_preview: bool,
+    preview_target_file: Option<PathBuf>,
+    external_preview_target_pane_id: Option<String>,
     preview_enabled: bool,
     preview_target_pane_id: Option<String>,
     preview_title: String,
@@ -354,6 +370,9 @@ impl<S: SessionSearch> App<S> {
             },
             mode: ListViewModes::NormalMode,
             expanded_sessions: HashSet::new(),
+            external_preview: false,
+            preview_target_file: None,
+            external_preview_target_pane_id: None,
             preview_enabled: false,
             preview_target_pane_id: None,
             preview_title: "Pane Preview".to_string(),
@@ -365,7 +384,10 @@ impl<S: SessionSearch> App<S> {
         Ok(app)
     }
     /// Runs the main event loop for the list view
-    fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<(), TuiError> {
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<TuiExit, TuiError> {
+        if self.external_preview {
+            self.sync_external_preview_target(true)?;
+        }
         loop {
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -391,7 +413,7 @@ impl<S: SessionSearch> App<S> {
                         }
                         KeyCode::Enter => {
                             self.switch_session()?;
-                            return Ok(());
+                            return Ok(TuiExit::Quit);
                         }
                         KeyCode::Backspace => {
                             self.search.query.pop();
@@ -418,12 +440,15 @@ impl<S: SessionSearch> App<S> {
                         && let Some(index) = meta_jump_index(c)
                     {
                         self.jump_to_session_index(index);
+                        if self.external_preview {
+                            self.sync_external_preview_target(false)?;
+                        }
                         continue;
                     }
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                        KeyCode::Char('q') | KeyCode::Esc => return Ok(TuiExit::Quit),
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            return Ok(());
+                            return Ok(TuiExit::Quit);
                         }
                         KeyCode::Char('/') => {
                             self.mode = ListViewModes::SearchMode;
@@ -434,7 +459,7 @@ impl<S: SessionSearch> App<S> {
                         }
                         KeyCode::Enter => {
                             self.switch_session()?;
-                            return Ok(());
+                            return Ok(TuiExit::Quit);
                         }
                         KeyCode::Char('j') | KeyCode::Down => self.next_row(),
                         KeyCode::Char('k') | KeyCode::Up => self.previous_row(),
@@ -450,7 +475,11 @@ impl<S: SessionSearch> App<S> {
                         }
                         KeyCode::Char('l') => self.expand_selected(),
                         KeyCode::Char('h') => self.collapse_selected(),
-                        KeyCode::Char('p') => self.toggle_preview(),
+                        KeyCode::Char('p') => {
+                            if let Some(exit) = self.handle_preview_key() {
+                                return Ok(exit);
+                            }
+                        }
                         KeyCode::Char('x') => self.enter_delete_mode(),
                         KeyCode::Char('r') => {
                             info!("tui refresh requested");
@@ -462,6 +491,10 @@ impl<S: SessionSearch> App<S> {
                         }
                         _ => {}
                     }
+                }
+
+                if self.external_preview {
+                    self.sync_external_preview_target(false)?;
                 }
             }
         }
@@ -756,6 +789,9 @@ impl<S: SessionSearch> App<S> {
         self.filtered_sessions = self.sessions.clone();
         self.rebuild_rows();
         self.apply_search_with(previous)?;
+        if self.external_preview {
+            self.sync_external_preview_target(true)?;
+        }
         if self.preview_enabled {
             self.sync_preview_to_selection(true);
         }
@@ -775,7 +811,7 @@ impl<S: SessionSearch> App<S> {
         ]);
         let sections = layout.split(frame.area());
         self.render_search(frame, sections[0]);
-        if self.preview_enabled {
+        if self.preview_enabled && !self.external_preview {
             self.sync_preview_to_selection(false);
             let split =
                 Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)])
@@ -1072,6 +1108,14 @@ impl<S: SessionSearch> App<S> {
         }
     }
 
+    fn handle_preview_key(&mut self) -> Option<TuiExit> {
+        if self.external_preview {
+            return Some(TuiExit::ToggleExternalPreview);
+        }
+        self.toggle_preview();
+        None
+    }
+
     fn toggle_preview(&mut self) {
         self.preview_enabled = !self.preview_enabled;
         if self.preview_enabled {
@@ -1081,6 +1125,27 @@ impl<S: SessionSearch> App<S> {
             self.preview_title = "Pane Preview".to_string();
             self.preview_text = PREVIEW_DEFAULT_TEXT.to_string();
         }
+    }
+
+    fn sync_external_preview_target(&mut self, force: bool) -> Result<(), TuiError> {
+        if !self.external_preview {
+            return Ok(());
+        }
+
+        let target = self.preview_target_for_selected_row();
+        let target_id = target.map(|target| target.pane_id);
+        if !force && self.external_preview_target_pane_id == target_id {
+            return Ok(());
+        }
+        self.external_preview_target_pane_id = target_id.clone();
+
+        let Some(target_file) = &self.preview_target_file else {
+            return Ok(());
+        };
+        let mut value = target_id.unwrap_or_default();
+        value.push('\n');
+        fs::write(target_file, value)?;
+        Ok(())
     }
 
     fn sync_preview_to_selection(&mut self, force: bool) {
@@ -2182,6 +2247,31 @@ esac
             .preview_target_for_selected_row()
             .expect("preview target");
         assert_eq!(target.pane_id, "%9");
+    }
+
+    #[test]
+    fn handle_preview_key_returns_toggle_exit_for_external_preview() {
+        let sessions = vec![session_with_window_and_pane()];
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        app.external_preview = true;
+        let exit = app.handle_preview_key();
+        assert_eq!(exit, Some(TuiExit::ToggleExternalPreview));
+    }
+
+    #[test]
+    fn sync_external_preview_target_writes_selected_pane_to_file() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let target_file = dir.path().join("pane_target.txt");
+        let sessions = vec![session_with_sparse_windows_for_preview()];
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        app.external_preview = true;
+        app.preview_target_file = Some(target_file.clone());
+
+        app.sync_external_preview_target(true)
+            .expect("sync preview target");
+
+        let contents = std::fs::read_to_string(&target_file).expect("read target file");
+        assert_eq!(contents, "%9\n");
     }
 
     #[test]

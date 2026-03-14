@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 get_tmux_option() {
   local option="$1"
   local default="$2"
@@ -65,7 +67,7 @@ bind_prefix_key() {
   tmux bind-key "$key" "$@"
 }
 
-bind_prefix_key "@jkl_key_agent_view" "f" "@jkl_key_tui" display-popup -E -w 80% -h 70% "jkl tui"
+bind_prefix_key "@jkl_key_agent_view" "f" "@jkl_key_tui" run-shell "$CURRENT_DIR/scripts/live_popup.sh '#{pane_id}'"
 bind_prefix_key "@jkl_key_context" "W" command-prompt -p "Context for #S:" "run-shell \"jkl upsert '#S' --session-id '#{session_id}' --context '%%'\""
 bind_prefix_key "@jkl_key_edit" "e" display-popup -E -w 40% -h 40% "nvim ~/.config/jkl/session_context.json"
 bind_prefix_key "@jkl_key_pane_state" "S" run-shell 'tmux display-popup -E -w 30% -h 20% "jkl tui --pane-state --session-name \"#{session_name}\" --pane-id \"#{pane_id}\""'
