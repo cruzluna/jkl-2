@@ -68,27 +68,35 @@ fn render_pane_frame(pane_id: &str, lines: usize) -> String {
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::TempDir;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_target_path(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("jkl-preview-tests-{prefix}-{nanos}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir.join("target.txt")
+    }
 
     #[test]
     fn read_target_returns_none_for_missing_file() {
-        let dir = TempDir::new().expect("temp dir");
-        let path = dir.path().join("target.txt");
+        let path = temp_target_path("missing");
         assert_eq!(read_target(&path), None);
     }
 
     #[test]
     fn read_target_trims_whitespace() {
-        let dir = TempDir::new().expect("temp dir");
-        let path = dir.path().join("target.txt");
+        let path = temp_target_path("trim");
         fs::write(&path, "  %9  \n").expect("write target");
         assert_eq!(read_target(&path), Some("%9".to_string()));
     }
 
     #[test]
     fn read_target_returns_none_for_empty_file() {
-        let dir = TempDir::new().expect("temp dir");
-        let path = dir.path().join("target.txt");
+        let path = temp_target_path("empty");
         fs::write(&path, "   \n").expect("write target");
         assert_eq!(read_target(&path), None);
     }

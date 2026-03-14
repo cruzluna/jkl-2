@@ -2260,8 +2260,13 @@ esac
 
     #[test]
     fn sync_external_preview_target_writes_selected_pane_to_file() {
-        let dir = tempfile::TempDir::new().expect("temp dir");
-        let target_file = dir.path().join("pane_target.txt");
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("jkl-tui-preview-target-{nanos}"));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let target_file = dir.join("pane_target.txt");
         let sessions = vec![session_with_sparse_windows_for_preview()];
         let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
         app.external_preview = true;
@@ -2272,6 +2277,7 @@ esac
 
         let contents = std::fs::read_to_string(&target_file).expect("read target file");
         assert_eq!(contents, "%9\n");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
