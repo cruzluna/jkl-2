@@ -328,6 +328,7 @@ impl<S: SessionSearch> App<S> {
     /// Creates a list view with an injected search backend.
     ///
     /// This keeps search behavior testable without heap allocation or dynamic dispatch.
+    #[cfg(test)]
     fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
         Self::new_with_origin_pane_id(sessions, filter, None)
     }
