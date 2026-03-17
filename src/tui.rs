@@ -920,15 +920,14 @@ impl<S: SessionSearch> App<S> {
                 .map(|index| format!("{}: {}", session_shortcut_label(*index), row.name))
                 .unwrap_or_else(|| row.name.clone()),
             RowItem::Window(row) => format!("  ◦ {}", row.name),
-            RowItem::Pane(row) => format!(
-                "    └─ {} {}",
-                if self.origin_pane_id.as_deref() == Some(row.id.as_str()) {
-                    ORIGIN_PANE_INDICATOR
+            RowItem::Pane(row) => {
+                let indicator = if self.origin_pane_id.as_deref() == Some(row.id.as_str()) {
+                    format!(" {ORIGIN_PANE_INDICATOR}")
                 } else {
-                    " "
-                },
-                pane_label(row)
-            ),
+                    String::new()
+                };
+                format!("    └─ {}{}", pane_label(row), indicator)
+            }
         }
     }
 
@@ -1944,7 +1943,7 @@ esac
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
 
-        assert_eq!(app.row_label(&app.rows[2]), "    └─   verylon...");
+        assert_eq!(app.row_label(&app.rows[2]), "    └─ verylon...");
     }
 
     #[test]
@@ -1989,9 +1988,9 @@ esac
 
         assert_eq!(
             app.row_label(&app.rows[2]),
-            format!("    └─ {ORIGIN_PANE_INDICATOR} origin")
+            format!("    └─ origin {ORIGIN_PANE_INDICATOR}")
         );
-        assert_eq!(app.row_label(&app.rows[3]), "    └─   other");
+        assert_eq!(app.row_label(&app.rows[3]), "    └─ other");
     }
 
     #[test]
