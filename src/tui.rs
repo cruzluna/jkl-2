@@ -16,7 +16,7 @@ use nucleo::{Config as NucleoConfig, Matcher as NucleoMatcher};
 const DATA_NOT_RECEIVED: &str = "-";
 // TODO: Will make this configurable in the future.
 const PANE_LABEL_MAX_WIDTH: usize = 10;
-const ORIGIN_PANE_INDICATOR: &str = "●";
+const ORIGIN_PANE_INDICATOR: &str = "◦";
 const INFO_TEXT: &str = "(?) help | (Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (L) toggle all | (x) delete selected | (r) refresh";
 const HELP_FEEDBACK_TEXT: &str =
     "Feedback: create an issue at https://github.com/cruzluna/jkl-2/issues";
