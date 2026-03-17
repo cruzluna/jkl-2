@@ -309,13 +309,18 @@ struct App<S: SessionSearch> {
     search: SearchQuery,
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
+    origin_pane_id: Option<String>,
     filter: S,
 }
 
 impl App<NucleoSessionSearch> {
     /// Creates a list view of sessions and panes
     fn new(sessions: Vec<SessionRow>) -> Result<Self, TuiError> {
-        Self::new_with_filter(sessions, NucleoSessionSearch::new())
+        Self::new_with_origin_pane_id(
+            sessions,
+            NucleoSessionSearch::new(),
+            current_origin_pane_id(),
+        )
     }
 }
 
@@ -324,6 +329,14 @@ impl<S: SessionSearch> App<S> {
     ///
     /// This keeps search behavior testable without heap allocation or dynamic dispatch.
     fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
+        Self::new_with_origin_pane_id(sessions, filter, None)
+    }
+
+    fn new_with_origin_pane_id(
+        sessions: Vec<SessionRow>,
+        filter: S,
+        origin_pane_id: Option<String>,
+    ) -> Result<Self, TuiError> {
         let search_candidates = build_search_candidates(&sessions);
         let mut app = Self {
             state: TableState::default(),
@@ -341,6 +354,7 @@ impl<S: SessionSearch> App<S> {
             },
             mode: ListViewModes::NormalMode,
             expanded_sessions: HashSet::new(),
+            origin_pane_id,
             filter,
         };
         app.rebuild_rows();
@@ -904,7 +918,15 @@ impl<S: SessionSearch> App<S> {
                 .map(|index| format!("{}: {}", session_shortcut_label(*index), row.name))
                 .unwrap_or_else(|| row.name.clone()),
             RowItem::Window(row) => format!("  ◦ {}", row.name),
-            RowItem::Pane(row) => format!("    └─ {}", pane_label(row)),
+            RowItem::Pane(row) => format!(
+                "    └─ {} {}",
+                if self.origin_pane_id.as_deref() == Some(row.id.as_str()) {
+                    "•"
+                } else {
+                    " "
+                },
+                pane_label(row)
+            ),
         }
     }
 
@@ -1192,6 +1214,13 @@ fn centered_rect_size(width: u16, height: u16, rect: Rect) -> Rect {
     let x = rect.x + rect.width.saturating_sub(width) / 2;
     let y = rect.y + rect.height.saturating_sub(height) / 2;
     Rect::new(x, y, width, height)
+}
+
+fn current_origin_pane_id() -> Option<String> {
+    std::env::var("TMUX_PANE")
+        .ok()
+        .map(|pane_id| pane_id.trim().to_string())
+        .filter(|pane_id| !pane_id.is_empty())
 }
 
 fn build_search_candidates(sessions: &[SessionRow]) -> Vec<SearchCandidate> {
@@ -1913,7 +1942,51 @@ esac
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
 
-        assert_eq!(app.row_label(&app.rows[2]), "    └─ verylon...");
+        assert_eq!(app.row_label(&app.rows[2]), "    └─   verylon...");
+    }
+
+    #[test]
+    fn row_label_marks_origin_pane_with_indicator() {
+        let sessions = vec![SessionRow {
+            id: "@1".to_string(),
+            name: "alpha".to_string(),
+            status: None,
+            context: "ctx".to_string(),
+            windows: vec![WindowRow {
+                id: "@10".to_string(),
+                name: "editor".to_string(),
+                status: None,
+                context: "wctx".to_string(),
+                panes: vec![
+                    PaneRow {
+                        id: "%1".to_string(),
+                        window_id: "@10".to_string(),
+                        alias: Some("origin".to_string()),
+                        status: None,
+                        context: "p1".to_string(),
+                        session_id: "@1".to_string(),
+                    },
+                    PaneRow {
+                        id: "%2".to_string(),
+                        window_id: "@10".to_string(),
+                        alias: Some("other".to_string()),
+                        status: None,
+                        context: "p2".to_string(),
+                        session_id: "@1".to_string(),
+                    },
+                ],
+                session_id: "@1".to_string(),
+            }],
+        }];
+
+        let mut app =
+            App::new_with_origin_pane_id(sessions, passthrough_filter(), Some("%1".to_string()))
+                .expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+
+        assert_eq!(app.row_label(&app.rows[2]), "    └─ • origin");
+        assert_eq!(app.row_label(&app.rows[3]), "    └─   other");
     }
 
     #[test]
