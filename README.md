@@ -37,7 +37,7 @@ The installer adds:
 
 - `jkl`
 
-After install, the script prints copy/paste prompts for Claude Code hooks, Kiro CLI hooks, and the `~/.tmux.conf` lines needed for the `jkl-2` TPM plugin. Reprint them later with `jkl init prompts`.
+After install, the script prints copy/paste prompts for Claude Code hooks, Kiro CLI hooks, and the `~/.tmux.conf` lines needed for the `jkl-2` TPM plugin. Reprint them later with `jkl init prompts`; Codex experimental hook prompts are available there too.
 
 ### Release Asset (manual)
 
@@ -103,7 +103,7 @@ Then refresh Fig autocomplete:
 jkl init fig-autocomplete
 ```
 
-`jkl update` also prints the same Claude Code/Kiro hook prompts and the `~/.tmux.conf` prompt after the update finishes. Use `jkl init prompts` to print them again on demand.
+`jkl update` also prints the same Claude Code/Kiro hook prompts and the `~/.tmux.conf` prompt after the update finishes. Use `jkl init prompts` to print them again on demand, including the Codex experimental hook prompt.
 
 ## Uninstall
 
@@ -377,10 +377,13 @@ Filter by integration provider or prompt type:
 
 ```
 jkl init prompts --provider claude --option hooks
+jkl init prompts --provider codex --option hooks
 jkl init prompts --provider codex --option skills
 jkl init prompts --option AGENTS.md
 jkl init prompts --option tmux.conf
 ```
+
+Codex hook prompts are experimental and copy/paste only for now; they include the `hooks.json` snippet plus the required `codex_hooks` feature flag for `.codex/config.toml` or `~/.codex/config.toml`.
 
 ### Fig autocomplete
 
