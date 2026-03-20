@@ -1275,7 +1275,29 @@ fn write_debug_log(hypothesis_id: &str, location: &str, message: &str, data: ser
     }
 }
 
+fn normalized_origin_pane_env(var_name: &str) -> Option<String> {
+    std::env::var(var_name)
+        .ok()
+        .map(|pane_id| pane_id.trim().to_string())
+        .filter(|pane_id| !pane_id.is_empty())
+}
+
 fn current_origin_pane_id() -> Option<String> {
+    let popup_origin = normalized_origin_pane_env("JKL_ORIGIN_PANE");
+    // #region agent log
+    write_debug_log(
+        "E",
+        "src/tui.rs:1283",
+        "current_origin_pane_id explicit popup env",
+        serde_json::json!({
+            "jkl_origin_pane": popup_origin.clone(),
+        }),
+    );
+    // #endregion
+    if popup_origin.is_some() {
+        return popup_origin;
+    }
+
     let tmux_pane_raw = std::env::var("TMUX_PANE").ok();
     let env_origin = tmux_pane_raw
         .as_deref()
@@ -2115,6 +2137,52 @@ esac
         env.set_var("TMUX_DISPLAY_MESSAGE", "%7");
 
         assert_eq!(current_origin_pane_id(), Some("%7".to_string()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn current_origin_pane_id_prefers_explicit_popup_env() {
+        let mut env = EnvGuard::new("tui-origin-pane-id-popup-env");
+        setup_fake_tmux(&mut env);
+        let log_path = env.temp_dir().join("tmux.log");
+        env.set_var("TMUX_LOG_FILE", &log_path);
+        env.set_var("JKL_ORIGIN_PANE", "%9");
+        env.remove_var("TMUX_PANE");
+        env.set_var("TMUX_DISPLAY_MESSAGE", "%7");
+
+        assert_eq!(current_origin_pane_id(), Some("%9".to_string()));
+    }
+
+    #[test]
+    fn row_label_without_origin_does_not_add_placeholder_space() {
+        let sessions = vec![SessionRow {
+            id: "@1".to_string(),
+            name: "alpha".to_string(),
+            status: None,
+            context: "ctx".to_string(),
+            windows: vec![WindowRow {
+                id: "@10".to_string(),
+                name: "editor".to_string(),
+                status: None,
+                context: "wctx".to_string(),
+                panes: vec![PaneRow {
+                    id: "%1".to_string(),
+                    window_id: "@10".to_string(),
+                    alias: Some("origin".to_string()),
+                    status: None,
+                    context: "p1".to_string(),
+                    session_id: "@1".to_string(),
+                }],
+                session_id: "@1".to_string(),
+            }],
+        }];
+
+        let mut app =
+            App::new_with_origin_pane_id(sessions, passthrough_filter(), None).expect("app");
+        app.expanded_sessions.insert("@1".to_string());
+        app.rebuild_rows();
+
+        assert_eq!(app.row_label(&app.rows[2]), "    └─ origin");
     }
 
     #[test]
