@@ -147,6 +147,27 @@ pub fn list_panes() -> Result<Vec<TmuxPane>, io::Error> {
     Ok(panes)
 }
 
+pub fn current_pane_id() -> Result<String, io::Error> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{pane_id}"])
+        .output()?;
+    if !output.status.success() {
+        let err = tmux_status_error("display-message", output.status, &output.stderr);
+        debug!("tmux display-message failed error={err}");
+        return Err(err);
+    }
+
+    let pane_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if pane_id.is_empty() {
+        return Err(io::Error::other(
+            "tmux display-message returned empty pane id",
+        ));
+    }
+
+    debug!("tmux current pane id={pane_id}");
+    Ok(pane_id)
+}
+
 pub fn switch_client(target: &str) -> Result<(), io::Error> {
     let output = Command::new("tmux")
         .args(["switch-client", "-t", target])
@@ -254,6 +275,14 @@ case "$1" in
       exit "${TMUX_LIST_PANES_EXIT}"
     fi
     printf "%s" "${TMUX_LIST_PANES:-}"
+    exit 0
+    ;;
+  display-message)
+    if [ "${TMUX_DISPLAY_MESSAGE_EXIT:-0}" -ne 0 ]; then
+      echo "${TMUX_DISPLAY_MESSAGE_ERR:-error}" 1>&2
+      exit "${TMUX_DISPLAY_MESSAGE_EXIT}"
+    fi
+    printf "%s" "${TMUX_DISPLAY_MESSAGE:-}"
     exit 0
     ;;
   switch-client)
@@ -406,6 +435,32 @@ esac
         assert_eq!(
             err.to_string(),
             "tmux list-panes failed (exit code 1): no panes"
+        );
+    }
+
+    #[test]
+    fn current_pane_id_reads_display_message_output() {
+        let mut env = EnvGuard::new("tmux-current-pane-id");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_DISPLAY_MESSAGE", "%7");
+        env.remove_var("TMUX_DISPLAY_MESSAGE_EXIT");
+
+        let pane_id = current_pane_id().expect("current pane id");
+        assert_eq!(pane_id, "%7");
+    }
+
+    #[test]
+    fn current_pane_id_returns_error_for_empty_output() {
+        let mut env = EnvGuard::new("tmux-current-pane-id-empty");
+        setup_fake_tmux(&mut env);
+        env.set_var("TMUX_DISPLAY_MESSAGE", " ");
+        env.remove_var("TMUX_DISPLAY_MESSAGE_EXIT");
+
+        let err = current_pane_id().expect_err("expected empty output to fail");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(
+            err.to_string(),
+            "tmux display-message returned empty pane id"
         );
     }
 

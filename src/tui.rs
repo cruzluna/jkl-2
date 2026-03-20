@@ -920,15 +920,14 @@ impl<S: SessionSearch> App<S> {
                 .map(|index| format!("{}: {}", session_shortcut_label(*index), row.name))
                 .unwrap_or_else(|| row.name.clone()),
             RowItem::Window(row) => format!("  ◦ {}", row.name),
-            RowItem::Pane(row) => format!(
-                "    └─ {} {}",
+            RowItem::Pane(row) => {
+                let label = pane_label(row);
                 if self.origin_pane_id.as_deref() == Some(row.id.as_str()) {
-                    ORIGIN_PANE_INDICATOR
+                    format!("    └─ {ORIGIN_PANE_INDICATOR} {label}")
                 } else {
-                    " "
-                },
-                pane_label(row)
-            ),
+                    format!("    └─ {label}")
+                }
+            }
         }
     }
 
@@ -1223,6 +1222,12 @@ fn current_origin_pane_id() -> Option<String> {
         .ok()
         .map(|pane_id| pane_id.trim().to_string())
         .filter(|pane_id| !pane_id.is_empty())
+        .or_else(|| {
+            crate::tmux::current_pane_id()
+                .ok()
+                .map(|pane_id| pane_id.trim().to_string())
+                .filter(|pane_id| !pane_id.is_empty())
+        })
 }
 
 fn build_search_candidates(sessions: &[SessionRow]) -> Vec<SearchCandidate> {
@@ -1545,6 +1550,10 @@ case "$cmd" in
     ;;
   list-panes)
     printf "%s" "${TMUX_LIST_PANES:-}"
+    exit 0
+    ;;
+  display-message)
+    printf "%s" "${TMUX_DISPLAY_MESSAGE:-}"
     exit 0
     ;;
   switch-client)
@@ -1944,7 +1953,7 @@ esac
         app.expanded_sessions.insert("@1".to_string());
         app.rebuild_rows();
 
-        assert_eq!(app.row_label(&app.rows[2]), "    └─   verylon...");
+        assert_eq!(app.row_label(&app.rows[2]), "    └─ verylon...");
     }
 
     #[test]
@@ -1991,7 +2000,20 @@ esac
             app.row_label(&app.rows[2]),
             format!("    └─ {ORIGIN_PANE_INDICATOR} origin")
         );
-        assert_eq!(app.row_label(&app.rows[3]), "    └─   other");
+        assert_eq!(app.row_label(&app.rows[3]), "    └─ other");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn current_origin_pane_id_falls_back_to_tmux_display_message() {
+        let mut env = EnvGuard::new("tui-origin-pane-id-fallback");
+        setup_fake_tmux(&mut env);
+        let log_path = env.temp_dir().join("tmux.log");
+        env.set_var("TMUX_LOG_FILE", &log_path);
+        env.remove_var("TMUX_PANE");
+        env.set_var("TMUX_DISPLAY_MESSAGE", "%7");
+
+        assert_eq!(current_origin_pane_id(), Some("%7".to_string()));
     }
 
     #[test]
