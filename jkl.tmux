@@ -65,7 +65,7 @@ bind_prefix_key() {
   tmux bind-key "$key" "$@"
 }
 
-bind_prefix_key "@jkl_key_agent_view" "f" "@jkl_key_tui" display-popup -E -w 40% -h 40% "JKL_ORIGIN_PANE=#{pane_id} jkl tui"
+bind_prefix_key "@jkl_key_agent_view" "f" "@jkl_key_tui" display-popup -E -w 40% -h 40% "env JKL_ORIGIN_PANE='#{pane_id}' jkl tui"
 bind_prefix_key "@jkl_key_context" "W" command-prompt -p "Context for #S:" "run-shell \"jkl upsert '#S' --session-id '#{session_id}' --context '%%'\""
 bind_prefix_key "@jkl_key_edit" "e" display-popup -E -w 40% -h 40% "nvim ~/.config/jkl/session_context.json"
 bind_prefix_key "@jkl_key_pane_state" "S" run-shell 'tmux display-popup -E -w 30% -h 20% "jkl tui --pane-state --session-name \"#{session_name}\" --pane-id \"#{pane_id}\""'
