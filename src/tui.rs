@@ -5,7 +5,8 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::{HashMap, HashSet};
-use std::io;
+use std::io::{self, Write};
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -361,6 +362,26 @@ impl<S: SessionSearch> App<S> {
         };
         app.rebuild_rows();
         app.ensure_selection();
+        let pane_ids: Vec<String> = app
+            .sessions
+            .iter()
+            .flat_map(|session| session.windows.iter())
+            .flat_map(|window| window.panes.iter())
+            .map(|pane| pane.id.clone())
+            .collect();
+        // #region agent log
+        write_debug_log(
+            "C",
+            "src/tui.rs:362",
+            "app initialized with origin pane and live pane ids",
+            serde_json::json!({
+                "origin_pane_id": app.origin_pane_id.clone(),
+                "session_count": app.sessions.len(),
+                "pane_ids": pane_ids,
+                "visible_row_count": app.rows.len(),
+            }),
+        );
+        // #endregion
         Ok(app)
     }
     /// Runs the main event loop for the list view
@@ -922,11 +943,27 @@ impl<S: SessionSearch> App<S> {
             RowItem::Window(row) => format!("  ◦ {}", row.name),
             RowItem::Pane(row) => {
                 let label = pane_label(row);
-                if self.origin_pane_id.as_deref() == Some(row.id.as_str()) {
+                let is_origin = self.origin_pane_id.as_deref() == Some(row.id.as_str());
+                let rendered = if is_origin {
                     format!("    └─ {ORIGIN_PANE_INDICATOR} {label}")
                 } else {
                     format!("    └─ {label}")
-                }
+                };
+                // #region agent log
+                write_debug_log(
+                    "D",
+                    "src/tui.rs:923",
+                    "row_label pane rendered",
+                    serde_json::json!({
+                        "row_id": row.id.clone(),
+                        "origin_pane_id": self.origin_pane_id.clone(),
+                        "is_origin": is_origin,
+                        "label": label.clone(),
+                        "rendered": rendered.clone(),
+                    }),
+                );
+                // #endregion
+                rendered
             }
         }
     }
@@ -1217,17 +1254,81 @@ fn centered_rect_size(width: u16, height: u16, rect: Rect) -> Rect {
     Rect::new(x, y, width, height)
 }
 
+fn write_debug_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/opt/cursor/logs/debug.log")
+    {
+        let payload = serde_json::json!({
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": timestamp,
+        });
+        let _ = writeln!(file, "{payload}");
+    }
+}
+
 fn current_origin_pane_id() -> Option<String> {
-    std::env::var("TMUX_PANE")
-        .ok()
-        .map(|pane_id| pane_id.trim().to_string())
+    let tmux_pane_raw = std::env::var("TMUX_PANE").ok();
+    let env_origin = tmux_pane_raw
+        .as_deref()
+        .map(str::trim)
         .filter(|pane_id| !pane_id.is_empty())
-        .or_else(|| {
-            crate::tmux::current_pane_id()
-                .ok()
-                .map(|pane_id| pane_id.trim().to_string())
-                .filter(|pane_id| !pane_id.is_empty())
-        })
+        .map(str::to_string);
+    // #region agent log
+    write_debug_log(
+        "A",
+        "src/tui.rs:1220",
+        "current_origin_pane_id env snapshot",
+        serde_json::json!({
+            "tmux_set": std::env::var_os("TMUX").is_some(),
+            "tmux_pane_raw": tmux_pane_raw.clone(),
+            "env_origin": env_origin.clone(),
+        }),
+    );
+    // #endregion
+
+    let (fallback_origin, fallback_error) = if env_origin.is_none() {
+        match crate::tmux::current_pane_id() {
+            Ok(pane_id) => {
+                let pane_id = pane_id.trim().to_string();
+                if pane_id.is_empty() {
+                    (
+                        None,
+                        Some("tmux display-message returned empty pane id".to_string()),
+                    )
+                } else {
+                    (Some(pane_id), None)
+                }
+            }
+            Err(err) => (None, Some(err.to_string())),
+        }
+    } else {
+        (None, None)
+    };
+    let selected_origin = env_origin.clone().or(fallback_origin.clone());
+    // #region agent log
+    write_debug_log(
+        "B",
+        "src/tui.rs:1246",
+        "current_origin_pane_id resolved",
+        serde_json::json!({
+            "selected_origin": selected_origin.clone(),
+            "source": if env_origin.is_some() { "env" } else if fallback_origin.is_some() { "tmux_display_message" } else { "none" },
+            "fallback_origin": fallback_origin.clone(),
+            "fallback_error": fallback_error.clone(),
+        }),
+    );
+    // #endregion
+
+    selected_origin
 }
 
 fn build_search_candidates(sessions: &[SessionRow]) -> Vec<SearchCandidate> {
