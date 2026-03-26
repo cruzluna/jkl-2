@@ -71,8 +71,8 @@ fn search_failure(message: String) -> TuiError {
     TuiError::SearchFailure(message)
 }
 
-pub fn run() -> Result<(), TuiError> {
-    info!("tui starting");
+pub fn run(compact: bool) -> Result<(), TuiError> {
+    info!("tui starting compact={compact}");
     let sessions = crate::tmux::list_sessions().map_err(backend_failure)?;
     info!(
         "tui loaded {} tmux sessions: {:?}",
@@ -89,7 +89,7 @@ pub fn run() -> Result<(), TuiError> {
     let items = build_sessions(sessions, contexts, panes);
     info!("tui built {} session rows", items.len());
 
-    let mut app = App::new(items)?;
+    let mut app = App::new(items, compact)?;
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
     ratatui::restore();
@@ -311,16 +311,18 @@ struct App<S: SessionSearch> {
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
     origin_pane_id: Option<String>,
+    compact: bool,
     filter: S,
 }
 
 impl App<NucleoSessionSearch> {
     /// Creates a list view of sessions and panes
-    fn new(sessions: Vec<SessionRow>) -> Result<Self, TuiError> {
-        Self::new_with_origin_pane_id(
+    fn new(sessions: Vec<SessionRow>, compact: bool) -> Result<Self, TuiError> {
+        Self::new_with_origin_pane_id_and_compact(
             sessions,
             NucleoSessionSearch::new(),
             current_origin_pane_id(),
+            compact,
         )
     }
 }
@@ -331,13 +333,32 @@ impl<S: SessionSearch> App<S> {
     /// This keeps search behavior testable without heap allocation or dynamic dispatch.
     #[cfg(test)]
     fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
-        Self::new_with_origin_pane_id(sessions, filter, None)
+        Self::new_with_origin_pane_id_and_compact(sessions, filter, None, false)
     }
 
+    #[cfg(test)]
     fn new_with_origin_pane_id(
         sessions: Vec<SessionRow>,
         filter: S,
         origin_pane_id: Option<String>,
+    ) -> Result<Self, TuiError> {
+        Self::new_with_origin_pane_id_and_compact(sessions, filter, origin_pane_id, false)
+    }
+
+    #[cfg(test)]
+    fn new_with_filter_and_compact(
+        sessions: Vec<SessionRow>,
+        filter: S,
+        compact: bool,
+    ) -> Result<Self, TuiError> {
+        Self::new_with_origin_pane_id_and_compact(sessions, filter, None, compact)
+    }
+
+    fn new_with_origin_pane_id_and_compact(
+        sessions: Vec<SessionRow>,
+        filter: S,
+        origin_pane_id: Option<String>,
+        compact: bool,
     ) -> Result<Self, TuiError> {
         let search_candidates = build_search_candidates(&sessions);
         let mut app = Self {
@@ -357,6 +378,7 @@ impl<S: SessionSearch> App<S> {
             mode: ListViewModes::NormalMode,
             expanded_sessions: HashSet::new(),
             origin_pane_id,
+            compact,
             filter,
         };
         app.rebuild_rows();
@@ -791,8 +813,6 @@ impl<S: SessionSearch> App<S> {
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let header = Row::new(["Session", "Status", "Context"])
-            .style(Style::default().add_modifier(Modifier::BOLD));
         let widths = self.table_column_widths(area);
 
         let rows = self.rows.iter().enumerate().map(|(index, item)| {
@@ -804,29 +824,50 @@ impl<S: SessionSearch> App<S> {
             if matches!(item, RowItem::Pane(_)) {
                 base_style = base_style.add_modifier(Modifier::DIM);
             }
-            Row::new(vec![
+
+            let mut cells = vec![
                 Cell::from(truncate_with_ellipsis(
                     &self.row_label(item),
                     widths.session as usize,
                 )),
                 Cell::from(status_text(row_status(item))).style(status_style(row_status(item))),
-                Cell::from(truncate_with_ellipsis(
+            ];
+            if !self.compact {
+                cells.push(Cell::from(truncate_with_ellipsis(
                     &row_context(item),
                     widths.context as usize,
-                )),
-            ])
-            .style(base_style)
+                )));
+            }
+
+            Row::new(cells).style(base_style)
         });
 
-        let table = Table::new(
-            rows,
-            [
-                Constraint::Length(widths.session),
-                Constraint::Length(widths.status),
-                Constraint::Length(widths.context),
-            ],
-        )
-        .header(header)
+        let table = if self.compact {
+            Table::new(
+                rows,
+                [
+                    Constraint::Length(widths.session),
+                    Constraint::Length(widths.status),
+                ],
+            )
+            .header(
+                Row::new(["Session", "Status"])
+                    .style(Style::default().add_modifier(Modifier::BOLD)),
+            )
+        } else {
+            Table::new(
+                rows,
+                [
+                    Constraint::Length(widths.session),
+                    Constraint::Length(widths.status),
+                    Constraint::Length(widths.context),
+                ],
+            )
+            .header(
+                Row::new(["Session", "Status", "Context"])
+                    .style(Style::default().add_modifier(Modifier::BOLD)),
+            )
+        }
         .block(Block::default().borders(Borders::ALL))
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
@@ -940,8 +981,41 @@ impl<S: SessionSearch> App<S> {
         #[allow(clippy::cast_possible_truncation)]
         let context_header_width = UnicodeWidthStr::width("Context") as u16;
 
-        // Account for table borders and the default one-cell spacing between three columns.
         let inner_width = area.width.saturating_sub(2);
+        if self.compact {
+            let usable_width = inner_width.saturating_sub(1);
+            if usable_width == 0 {
+                return TableColumnWidths {
+                    session: 0,
+                    status: 0,
+                    context: 0,
+                };
+            }
+
+            let min_session_width = if usable_width > status_header_width {
+                session_header_width.min(usable_width - status_header_width)
+            } else {
+                0
+            };
+            let mut status_width = self
+                .widths
+                .status
+                .max(status_header_width)
+                .min(usable_width.saturating_sub(min_session_width));
+            let mut session_width = usable_width.saturating_sub(status_width);
+            if session_width == 0 && usable_width > 0 {
+                session_width = 1;
+                status_width = usable_width.saturating_sub(session_width);
+            }
+
+            return TableColumnWidths {
+                session: session_width,
+                status: status_width,
+                context: 0,
+            };
+        }
+
+        // Account for table borders and the default one-cell spacing between three columns.
         let usable_width = inner_width.saturating_sub(2);
         if usable_width == 0 {
             return TableColumnWidths {
@@ -2009,6 +2083,23 @@ esac
         let rendered_label =
             truncate_with_ellipsis(&app.row_label(&app.rows[0]), widths.session as usize);
         assert!(rendered_label.ends_with("..."));
+    }
+
+    #[test]
+    fn compact_table_column_widths_hide_context_column() {
+        let sessions = vec![session_row(
+            "@1",
+            "this-is-a-very-long-session-name-that-should-expand-in-compact-mode",
+        )];
+        let app =
+            App::new_with_filter_and_compact(sessions, passthrough_filter(), true).expect("app");
+
+        let widths = app.table_column_widths(Rect::new(0, 0, 60, 10));
+
+        assert_eq!(widths.context, 0);
+        assert!(widths.session > 0);
+        assert!(widths.status > 0);
+        assert_eq!(widths.session + widths.status, 57);
     }
 
     #[test]

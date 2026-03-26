@@ -72,6 +72,9 @@ struct TuiArgs {
     /// Dont need to specifiy any other args if you just want to open the status selector popup for a session.
     #[arg(long, num_args = 1..)]
     session_name: Option<Vec<String>>,
+    /// Hide the context column in the main TUI list view.
+    #[arg(long)]
+    compact: bool,
     /// Open the pane status selector popup
     #[arg(long, alias = "pane-state")]
     open_pane_state: bool,
@@ -235,8 +238,8 @@ fn handle_tui(args: TuiArgs) -> Result<(), TuiError> {
             session_name,
         );
     }
-    info!("tui requested");
-    crate::tui::run()
+    info!("tui requested compact={}", args.compact);
+    crate::tui::run(args.compact)
 }
 
 fn handle_upsert(args: UpsertArgs) -> Result<(), ContextError> {
@@ -710,6 +713,21 @@ esac
                 assert_eq!(cmd.option, Some(InitPromptOption::TmuxConf));
             }
             _ => panic!("expected init prompts command"),
+        }
+    }
+
+    #[test]
+    fn parse_tui_accepts_compact_flag() {
+        let cli = Cli::try_parse_from(["jkl", "tui", "--compact"]).expect("parse tui");
+
+        match cli.command {
+            Commands::Tui(args) => {
+                assert!(args.compact);
+                assert!(!args.open_pane_state);
+                assert!(args.session_name.is_none());
+                assert!(args.pane_id.is_none());
+            }
+            _ => panic!("expected tui command"),
         }
     }
 
