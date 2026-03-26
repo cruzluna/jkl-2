@@ -136,6 +136,7 @@ Each archive should contain the `jkl` binary at the top level.
 ## Usage
 
 - Launch the TUI: `jkl tui`
+- Launch the compact TUI (hide context column): `jkl tui --compact`
 - Session rows are ordered by most recent tmux usage (most recent first)
 - Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search/help first)
 - Open keybinding help: `?`
