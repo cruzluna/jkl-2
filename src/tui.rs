@@ -1562,6 +1562,7 @@ mod tests {
     #[cfg(unix)]
     use crate::test_utils::EnvGuard;
     use crate::tmux::{TmuxPane, TmuxSession};
+    use ratatui::{Terminal, backend::TestBackend};
     use std::collections::HashMap;
     #[cfg(unix)]
     use std::fs;
@@ -2100,6 +2101,38 @@ esac
         assert!(widths.session > 0);
         assert!(widths.status > 0);
         assert_eq!(widths.session + widths.status, 57);
+    }
+
+    #[test]
+    fn compact_render_omits_context_column_and_content() {
+        let sessions = vec![SessionRow {
+            id: "@1".to_string(),
+            name: "alpha".to_string(),
+            status: Some(AgentStatus::Working),
+            context: "session ctx".to_string(),
+            windows: Vec::new(),
+        }];
+        let mut app =
+            App::new_with_filter_and_compact(sessions, passthrough_filter(), true).expect("app");
+        let backend = TestBackend::new(50, 6);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| app.render_table(frame, frame.area()))
+            .expect("draw table");
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Session"));
+        assert!(rendered.contains("Status"));
+        assert!(rendered.contains("alpha"));
+        assert!(!rendered.contains("Context"));
+        assert!(!rendered.contains("session ctx"));
     }
 
     #[test]
