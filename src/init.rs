@@ -14,6 +14,10 @@ const KIRO_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(t
 const KIRO_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
 const CURSOR_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
 const CURSOR_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
+const CODEX_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
+const CODEX_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
+const CODEX_WORKING_STATUS_MESSAGE: &str = "Syncing jkl pane status to working";
+const CODEX_WAITING_STATUS_MESSAGE: &str = "Syncing jkl pane status to waiting";
 
 const KIRO_NAME: &str = "jkl";
 const KIRO_DESCRIPTION: &str = "Sync jkl status with Kiro activity";
@@ -44,7 +48,12 @@ const ALL_PROMPT_TOOLS: [InitTool; 4] = [
     InitTool::Kiro,
     InitTool::Codex,
 ];
-const HOOK_PROMPT_TOOLS: [InitTool; 3] = [InitTool::Claude, InitTool::Cursor, InitTool::Kiro];
+const HOOK_PROMPT_TOOLS: [InitTool; 4] = [
+    InitTool::Claude,
+    InitTool::Cursor,
+    InitTool::Kiro,
+    InitTool::Codex,
+];
 const SKILL_PROMPT_TOOLS: [InitTool; 3] = [InitTool::Codex, InitTool::Claude, InitTool::Kiro];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -345,7 +354,7 @@ fn render_hooks_prompt(tools: &[InitTool]) -> Result<String> {
     let mut sections = vec!["Hooks".to_string()];
     for tool in tools {
         let config = hook_config_snippet(*tool)?;
-        sections.push(format!(
+        let mut section = format!(
             "{}\nConfig paths:\n{}\nConfig:\n{}",
             prompt_provider_name(*tool),
             hook_path_hints(*tool)
@@ -354,7 +363,11 @@ fn render_hooks_prompt(tools: &[InitTool]) -> Result<String> {
                 .collect::<Vec<_>>()
                 .join("\n"),
             config
-        ));
+        );
+        if let Some(enablement) = hook_enablement_hint(*tool) {
+            section = format!("{section}\nEnablement:\n{enablement}");
+        }
+        sections.push(section);
     }
     Ok(sections.join("\n\n"))
 }
@@ -427,7 +440,16 @@ fn hook_path_hints(tool: InitTool) -> &'static [&'static str] {
         InitTool::Claude => &[".claude/settings.local.json", "~/.claude/settings.json"],
         InitTool::Cursor => &[".cursor/hooks.json", "~/.cursor/hooks.json"],
         InitTool::Kiro => &[".kiro/agents/jkl.json", "~/.kiro/agents/jkl.json"],
-        InitTool::Codex => &[],
+        InitTool::Codex => &[".codex/hooks.json", "~/.codex/hooks.json"],
+    }
+}
+
+fn hook_enablement_hint(tool: InitTool) -> Option<&'static str> {
+    match tool {
+        InitTool::Codex => Some(
+            "- Experimental feature flag required.\n- Add this to `.codex/config.toml` or `~/.codex/config.toml`:\n  [features]\n  codex_hooks = true",
+        ),
+        InitTool::Claude | InitTool::Cursor | InitTool::Kiro => None,
     }
 }
 
@@ -452,7 +474,9 @@ fn hook_config_snippet(tool: InitTool) -> Result<String> {
         InitTool::Kiro => {
             ensure_kiro_hooks(&mut root)?;
         }
-        InitTool::Codex => bail!("codex does not support hooks"),
+        InitTool::Codex => {
+            ensure_codex_hooks(&mut root)?;
+        }
     }
 
     Ok(serde_json::to_string_pretty(&root).context("serialize hook config")?)
@@ -890,6 +914,52 @@ fn ensure_cursor_hook_event(
     Ok(true)
 }
 
+fn ensure_codex_hooks(root: &mut Value) -> Result<bool> {
+    let root_obj = root
+        .as_object_mut()
+        .context("codex config root must be a JSON object")?;
+    let hooks = object_field(root_obj, "hooks")?;
+
+    let mut changed = false;
+    changed |= ensure_codex_hook_event(
+        hooks,
+        "UserPromptSubmit",
+        CODEX_WORKING_COMMAND,
+        CODEX_WORKING_STATUS_MESSAGE,
+    )?;
+    changed |= ensure_codex_hook_event(
+        hooks,
+        "Stop",
+        CODEX_WAITING_COMMAND,
+        CODEX_WAITING_STATUS_MESSAGE,
+    )?;
+    Ok(changed)
+}
+
+fn ensure_codex_hook_event(
+    hooks: &mut Map<String, Value>,
+    event: &str,
+    command: &str,
+    status_message: &str,
+) -> Result<bool> {
+    let event_entries = array_field(hooks, event)?;
+
+    if claude_event_contains_command(event_entries, command) {
+        return Ok(false);
+    }
+
+    event_entries.push(json!({
+        "hooks": [
+            {
+                "type": "command",
+                "command": command,
+                "statusMessage": status_message
+            }
+        ]
+    }));
+    Ok(true)
+}
+
 fn object_field<'a>(
     object: &'a mut Map<String, Value>,
     key: &str,
@@ -1213,12 +1283,31 @@ mod tests {
     }
 
     #[test]
-    fn render_prompts_for_codex_includes_supported_sections_only() {
+    fn render_prompts_for_codex_includes_hooks_and_core_sections() {
         let rendered = render_prompts(Some(InitTool::Codex), None).expect("render prompts");
+        assert!(rendered.contains("Hooks"));
         assert!(rendered.contains("Skills"));
         assert!(rendered.contains("AGENTS.md"));
         assert!(rendered.contains("tmux.conf"));
-        assert!(!rendered.contains("Hooks"));
+        assert!(rendered.contains(".codex/hooks.json"));
+        assert!(rendered.contains("codex_hooks = true"));
+    }
+
+    #[test]
+    fn render_hooks_prompt_for_codex_includes_feature_flag_and_events() {
+        let rendered = render_prompts(Some(InitTool::Codex), Some(InitPromptOption::Hooks))
+            .expect("render hooks");
+        assert!(rendered.contains("UserPromptSubmit"));
+        assert!(rendered.contains("Stop"));
+        assert!(rendered.contains("--status working"));
+        assert!(rendered.contains("--status waiting"));
+        assert!(rendered.contains("Syncing jkl pane status to working"));
+        assert!(rendered.contains("Syncing jkl pane status to waiting"));
+        assert!(rendered.contains(".codex/hooks.json"));
+        assert!(rendered.contains("~/.codex/hooks.json"));
+        assert!(rendered.contains(".codex/config.toml"));
+        assert!(rendered.contains("~/.codex/config.toml"));
+        assert!(rendered.contains("codex_hooks = true"));
     }
 
     #[test]
