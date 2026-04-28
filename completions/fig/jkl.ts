@@ -11,12 +11,6 @@ const initToolHooksSuggestions: Fig.Suggestion[] = [
   { name: "kiro", description: "Initialize Kiro CLI hooks" },
 ];
 
-const initToolSkillsSuggestions: Fig.Suggestion[] = [
-  { name: "codex", description: "Initialize Codex skills" },
-  { name: "claude", description: "Initialize Claude skills" },
-  { name: "kiro", description: "Initialize Kiro skills" },
-];
-
 const initScopeSuggestions: Fig.Suggestion[] = [
   { name: "local", description: "Write config in the current project" },
   { name: "global", description: "Write config under your HOME directory" },
@@ -31,7 +25,6 @@ const initPromptProviderSuggestions: Fig.Suggestion[] = [
 
 const initPromptOptionSuggestions: Fig.Suggestion[] = [
   { name: "hooks", description: "Hook prompts" },
-  { name: "skills", description: "Skill prompts" },
   { name: "AGENTS.md", description: "AGENTS.md prompt" },
   { name: "tmux.conf", description: "tmux.conf prompt" },
 ];
@@ -278,32 +271,6 @@ const completionSpec: Fig.Spec = {
               args: {
                 name: "path",
                 isVariadic: true,
-              },
-            },
-            {
-              name: "--non-interactive",
-              description: "Fail instead of prompting for missing options",
-            },
-          ],
-        },
-        {
-          name: "skills",
-          description: "Initialize Codex, Claude, or Kiro skills",
-          options: [
-            {
-              name: "--tool",
-              description: "Target integration tool",
-              args: {
-                name: "tool",
-                suggestions: initToolSkillsSuggestions,
-              },
-            },
-            {
-              name: "--scope",
-              description: "Where to write skill configuration",
-              args: {
-                name: "scope",
-                suggestions: initScopeSuggestions,
               },
             },
             {

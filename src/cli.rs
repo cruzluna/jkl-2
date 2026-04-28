@@ -141,7 +141,6 @@ struct InitArgs {
 #[derive(Subcommand)]
 enum InitCommands {
     Hooks(InitHooksArgs),
-    Skills(InitSkillsArgs),
     Prompts(InitPromptsArgs),
     FigAutocomplete,
 }
@@ -162,16 +161,6 @@ struct InitHooksArgs {
     #[arg(long = "agent-config", alias = "config", num_args = 1..)]
     agent_config: Option<Vec<PathBuf>>,
     /// Disable prompts; requires explicit options for deterministic automation.
-    #[arg(long)]
-    non_interactive: bool,
-}
-
-#[derive(Args)]
-struct InitSkillsArgs {
-    #[arg(long, value_enum)]
-    tool: Option<InitTool>,
-    #[arg(long, value_enum)]
-    scope: Option<InitScope>,
     #[arg(long)]
     non_interactive: bool,
 }
@@ -332,10 +321,6 @@ fn handle_init(args: InitArgs) -> Result<()> {
                 cmd.agent_config,
                 cmd.non_interactive,
             )
-        }
-        Some(InitCommands::Skills(cmd)) => {
-            eprintln!("Warning: 'jkl init' is experimental and may change without notice.");
-            crate::init::run_skills(cmd.tool, cmd.scope, cmd.non_interactive)
         }
         Some(InitCommands::Prompts(cmd)) => crate::init::run_prompts(cmd.provider, cmd.option),
         Some(InitCommands::FigAutocomplete) => {

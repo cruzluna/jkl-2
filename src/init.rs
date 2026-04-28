@@ -18,8 +18,6 @@ const CURSOR_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$
 const KIRO_NAME: &str = "jkl";
 const KIRO_DESCRIPTION: &str = "Sync jkl status with Kiro activity";
 
-const JKL_SKILL_MD: &str = include_str!("../skills/jkl-cli/SKILL.md");
-const JKL_SKILL_OPENAI_YAML: &str = include_str!("../skills/jkl-cli/agents/openai.yaml");
 const FIG_SPEC: &str = include_str!("../completions/fig/jkl.ts");
 const TMUX_CONF_LINES: [&str; 3] = [
     "set -g @plugin 'cruzluna/jkl-2'",
@@ -45,7 +43,6 @@ const ALL_PROMPT_TOOLS: [InitTool; 4] = [
     InitTool::Codex,
 ];
 const HOOK_PROMPT_TOOLS: [InitTool; 3] = [InitTool::Claude, InitTool::Cursor, InitTool::Kiro];
-const SKILL_PROMPT_TOOLS: [InitTool; 3] = [InitTool::Codex, InitTool::Claude, InitTool::Kiro];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum InitTool {
@@ -84,7 +81,6 @@ impl fmt::Display for InitScope {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum InitPromptOption {
     Hooks,
-    Skills,
     #[value(
         name = "AGENTS.md",
         alias = "agents.md",
@@ -100,7 +96,6 @@ impl fmt::Display for InitPromptOption {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Hooks => write!(f, "hooks"),
-            Self::Skills => write!(f, "skills"),
             Self::AgentsMd => write!(f, "AGENTS.md"),
             Self::TmuxConf => write!(f, "tmux.conf"),
         }
@@ -110,7 +105,6 @@ impl fmt::Display for InitPromptOption {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InitTarget {
     Hooks,
-    Skills,
     FigAutocomplete,
 }
 
@@ -118,7 +112,6 @@ impl fmt::Display for InitTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Hooks => write!(f, "hooks"),
-            Self::Skills => write!(f, "skills"),
             Self::FigAutocomplete => write!(f, "fig-autocomplete"),
         }
     }
@@ -129,18 +122,13 @@ pub fn run_interactive() -> Result<()> {
 
     let target = Select::new(
         "What do you want to initialize?",
-        vec![
-            InitTarget::Hooks,
-            InitTarget::Skills,
-            InitTarget::FigAutocomplete,
-        ],
+        vec![InitTarget::Hooks, InitTarget::FigAutocomplete],
     )
     .prompt()
     .context("prompt for init target")?;
 
     match target {
         InitTarget::Hooks => run_hooks(None, None, None, None, false),
-        InitTarget::Skills => run_skills(None, None, false),
         InitTarget::FigAutocomplete => run_fig_autocomplete(),
     }
 }
@@ -197,45 +185,6 @@ pub fn run_hooks(
     Ok(())
 }
 
-pub fn run_skills(
-    tool: Option<InitTool>,
-    scope: Option<InitScope>,
-    non_interactive: bool,
-) -> Result<()> {
-    let tool = resolve_tool(
-        tool,
-        non_interactive,
-        &[InitTool::Codex, InitTool::Claude, InitTool::Kiro],
-        "Select the tool to initialize skills for:",
-        "--tool is required when using --non-interactive",
-    )?;
-    let scope = resolve_scope(scope, non_interactive)?;
-
-    let root = skills_root_path(tool, scope)?;
-    let skill_dir = root.join("jkl-cli");
-    let skill_md = skill_dir.join("SKILL.md");
-    let agent_yaml = skill_dir.join("agents").join("openai.yaml");
-
-    let mut changed_files = 0;
-    changed_files += usize::from(write_file_if_changed(&skill_md, JKL_SKILL_MD.as_bytes())?);
-    changed_files += usize::from(write_file_if_changed(
-        &agent_yaml,
-        JKL_SKILL_OPENAI_YAML.as_bytes(),
-    )?);
-
-    if changed_files > 0 {
-        println!(
-            "Initialized jkl skill for {} at {}",
-            tool,
-            skill_dir.display()
-        );
-    } else {
-        println!("Skill already up to date at {}", skill_dir.display());
-    }
-
-    Ok(())
-}
-
 pub fn run_fig_autocomplete() -> Result<()> {
     let fig_repo_dir = ensure_fig_repo_dir()?;
 
@@ -282,7 +231,6 @@ fn render_prompts(provider: Option<InitTool>, option: Option<InitPromptOption>) 
     let options = option.map(|choice| vec![choice]).unwrap_or_else(|| {
         vec![
             InitPromptOption::Hooks,
-            InitPromptOption::Skills,
             InitPromptOption::AgentsMd,
             InitPromptOption::TmuxConf,
         ]
@@ -295,12 +243,6 @@ fn render_prompts(provider: Option<InitTool>, option: Option<InitPromptOption>) 
                 let tools = prompt_tools_for_option(provider, option, &HOOK_PROMPT_TOOLS);
                 if !tools.is_empty() {
                     sections.push(render_hooks_prompt(&tools)?);
-                }
-            }
-            InitPromptOption::Skills => {
-                let tools = prompt_tools_for_option(provider, option, &SKILL_PROMPT_TOOLS);
-                if !tools.is_empty() {
-                    sections.push(render_skills_prompt(&tools));
                 }
             }
             InitPromptOption::AgentsMd => {
@@ -324,7 +266,6 @@ fn render_prompts(provider: Option<InitTool>, option: Option<InitPromptOption>) 
 fn provider_supports_prompt_option(provider: InitTool, option: InitPromptOption) -> bool {
     match option {
         InitPromptOption::Hooks => HOOK_PROMPT_TOOLS.contains(&provider),
-        InitPromptOption::Skills => SKILL_PROMPT_TOOLS.contains(&provider),
         InitPromptOption::AgentsMd | InitPromptOption::TmuxConf => true,
     }
 }
@@ -357,27 +298,6 @@ fn render_hooks_prompt(tools: &[InitTool]) -> Result<String> {
         ));
     }
     Ok(sections.join("\n\n"))
-}
-
-fn render_skills_prompt(tools: &[InitTool]) -> String {
-    let roots = tools
-        .iter()
-        .map(|tool| {
-            format!(
-                "- {}: {}",
-                prompt_provider_name(*tool),
-                skill_root_hint(*tool)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "Skills\n\nProviders: {}\nCreate `jkl-cli/SKILL.md` and `jkl-cli/agents/openai.yaml` under one of these skill roots:\n{}\n\nSKILL.md\n{}\n\nagents/openai.yaml\n{}",
-        render_tool_list(tools),
-        roots,
-        JKL_SKILL_MD,
-        JKL_SKILL_OPENAI_YAML
-    )
 }
 
 fn render_agents_prompt(tools: &[InitTool]) -> String {
@@ -428,15 +348,6 @@ fn hook_path_hints(tool: InitTool) -> &'static [&'static str] {
         InitTool::Cursor => &[".cursor/hooks.json", "~/.cursor/hooks.json"],
         InitTool::Kiro => &[".kiro/agents/jkl.json", "~/.kiro/agents/jkl.json"],
         InitTool::Codex => &[],
-    }
-}
-
-fn skill_root_hint(tool: InitTool) -> &'static str {
-    match tool {
-        InitTool::Claude => ".claude/skills or ~/.claude/skills",
-        InitTool::Cursor => "unsupported",
-        InitTool::Kiro => ".kiro/skills or ~/.kiro/skills",
-        InitTool::Codex => ".agents/skills or ~/.agents/skills",
     }
 }
 
@@ -719,21 +630,6 @@ fn normalize_user_paths_from(paths: Vec<PathBuf>, cwd: &Path) -> Result<Vec<Path
         bail!("at least one config path is required");
     }
     Ok(normalized)
-}
-
-fn skills_root_path(tool: InitTool, scope: InitScope) -> Result<PathBuf> {
-    let home = home_dir()?;
-    let cwd = std::env::current_dir()?;
-
-    Ok(match (tool, scope) {
-        (InitTool::Codex, InitScope::Local) => cwd.join(".agents").join("skills"),
-        (InitTool::Codex, InitScope::Global) => home.join(".agents").join("skills"),
-        (InitTool::Claude, InitScope::Local) => cwd.join(".claude").join("skills"),
-        (InitTool::Claude, InitScope::Global) => home.join(".claude").join("skills"),
-        (InitTool::Cursor, _) => bail!("cursor does not support skills"),
-        (InitTool::Kiro, InitScope::Local) => cwd.join(".kiro").join("skills"),
-        (InitTool::Kiro, InitScope::Global) => home.join(".kiro").join("skills"),
-    })
 }
 
 fn load_json_object_or_empty(path: &Path) -> Result<Value> {
@@ -1030,15 +926,6 @@ mod tests {
     use crate::test_utils::EnvGuard;
 
     #[test]
-    fn skills_root_for_codex_global_uses_home_agents_skills() {
-        let mut env = EnvGuard::new("init-skills-root-codex-global");
-        let home = env.set_temp_home();
-
-        let root = skills_root_path(InitTool::Codex, InitScope::Global).expect("skills root");
-        assert_eq!(root, home.join(".agents").join("skills"));
-    }
-
-    #[test]
     fn hooks_path_rejects_codex() {
         let mut env = EnvGuard::new("init-hooks-codex-reject");
         env.set_temp_home();
@@ -1207,15 +1094,14 @@ mod tests {
 
     #[test]
     fn render_prompts_returns_note_for_unsupported_explicit_combo() {
-        let rendered = render_prompts(Some(InitTool::Cursor), Some(InitPromptOption::Skills))
+        let rendered = render_prompts(Some(InitTool::Codex), Some(InitPromptOption::Hooks))
             .expect("render prompts");
-        assert_eq!(rendered, "Cursor does not support skills prompts.");
+        assert_eq!(rendered, "Codex does not support hooks prompts.");
     }
 
     #[test]
     fn render_prompts_for_codex_includes_supported_sections_only() {
         let rendered = render_prompts(Some(InitTool::Codex), None).expect("render prompts");
-        assert!(rendered.contains("Skills"));
         assert!(rendered.contains("AGENTS.md"));
         assert!(rendered.contains("tmux.conf"));
         assert!(!rendered.contains("Hooks"));
