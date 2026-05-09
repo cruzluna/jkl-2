@@ -163,6 +163,17 @@ Each archive should contain the `jkl` binary at the top level.
 
 Multi-word session names or context can be passed without quotes; use `--` to terminate positional values if needed.
 
+## Configuration
+
+`jkl` reads optional configuration from `~/.config/jkl/jkl.toml`. If the file does not exist, it is created with defaults.
+On narrow terminals, `jkl tui` hides context automatically to keep session names and statuses readable.
+
+```toml
+[features]
+# Set false to hide the Context column in `jkl tui`.
+tui_context = true
+```
+
 ## Tmux Plugin (TPM)
 
 Add the plugin and reload TPM:
