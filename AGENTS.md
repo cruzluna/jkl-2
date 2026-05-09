@@ -41,3 +41,11 @@ Use this as the default playbook for coding agents in this repository.
 - Defer to runtime tmux values for targeting and navigation. Session/window/pane IDs can change after tmux resurrect or restart.
 - Treat persisted context IDs as advisory metadata. Re-resolve live IDs from tmux (`list-sessions`, `list-panes`, pane targets) before executing switch/select commands.
 - Use conventional commit messages
+
+## Cursor Cloud specific instructions
+
+- The project uses Rust edition 2024 (`Cargo.toml`), which requires Rust >= 1.85.0. The update script runs `rustup update stable` to keep the toolchain current.
+- `cargo clippy --all-targets -- -D warnings` produces pre-existing warnings on Rust >= 1.95 (`unnecessary_get_then_check`). These are not regressions; `cargo clippy --all-targets` (without `-D warnings`) is the practical lint check.
+- The TUI (`cargo run -- tui`) requires a tmux server with at least one session. Start a tmux session before launching the TUI, or tests that depend on live tmux will fail.
+- Tests use `EnvGuard` with temp directories and a fake tmux script, so `cargo test --locked` works without a running tmux server.
+- Session metadata is stored at `~/.config/jkl/session_context.json` (created automatically on first run).
