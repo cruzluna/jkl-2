@@ -1,4 +1,3 @@
-use blake3;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -705,7 +704,7 @@ mod tests {
         rename_session("sid", "New").expect("rename session");
 
         let contexts = load_contexts().expect("load contexts");
-        assert!(contexts.get(&session_key("Old")).is_none());
+        assert!(!contexts.contains_key(&session_key("Old")));
         let entry = contexts.get(&session_key("New")).expect("renamed entry");
         assert_eq!(entry.session_name.as_deref(), Some("New"));
         assert_eq!(entry.session_id.as_deref(), Some("sid"));
@@ -794,8 +793,8 @@ mod tests {
         );
 
         let contexts = load_contexts().expect("load contexts");
-        assert!(contexts.get(&session_key("old-name")).is_none());
-        assert!(contexts.get(&session_key("gone")).is_none());
+        assert!(!contexts.contains_key(&session_key("old-name")));
+        assert!(!contexts.contains_key(&session_key("gone")));
 
         let renamed = contexts
             .get(&session_key("new-name"))

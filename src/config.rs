@@ -11,18 +11,10 @@ const DEFAULT_CONFIG: &str = r#"# jkl configuration
 tui_context = true
 "#;
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct JklConfig {
     pub features: FeatureConfig,
-}
-
-impl Default for JklConfig {
-    fn default() -> Self {
-        Self {
-            features: FeatureConfig::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
