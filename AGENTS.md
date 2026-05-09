@@ -41,3 +41,11 @@ Use this as the default playbook for coding agents in this repository.
 - Defer to runtime tmux values for targeting and navigation. Session/window/pane IDs can change after tmux resurrect or restart.
 - Treat persisted context IDs as advisory metadata. Re-resolve live IDs from tmux (`list-sessions`, `list-panes`, pane targets) before executing switch/select commands.
 - Use conventional commit messages
+
+## Cursor Cloud specific instructions
+
+- **Rust toolchain**: The project uses `edition = "2024"` which requires Rust >= 1.85. The update script runs `rustup update stable && rustup default stable` to ensure this.
+- **tmux**: Required at runtime. The VM has tmux pre-installed. The TUI (`cargo run -- tui`) must be launched inside a tmux session. Tests mock tmux and do not need a running tmux server.
+- **Clippy with `-D warnings`**: The codebase has pre-existing `unnecessary_get_then_check` warnings that surface on Rust >= 1.95. Use `cargo clippy --all-targets` (without `-D warnings`) to check for new issues if the upstream warnings haven't been fixed yet.
+- **Session context**: Written to `~/.config/jkl/session_context.json`. Tests isolate this with `EnvGuard` temp directories.
+- **All standard build/test/lint commands** are listed in the "Build, Test, Lint" section above.
