@@ -211,6 +211,7 @@ impl RowItem {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 enum ListViewModes {
     /// Default mode when launching
     NormalMode,
@@ -343,6 +344,7 @@ impl<S: SessionSearch> App<S> {
     /// Creates a list view with an injected search backend.
     ///
     /// This keeps search behavior testable without heap allocation or dynamic dispatch.
+    #[cfg(test)]
     fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
         Self::new_with_features_and_filter(
             sessions,
@@ -599,11 +601,11 @@ impl<S: SessionSearch> App<S> {
             self.state.select(None);
             return;
         }
-        if let Some(key) = previous {
-            if let Some(index) = self.rows.iter().position(|row| row.key() == key) {
-                self.state.select(Some(index));
-                return;
-            }
+        if let Some(key) = previous
+            && let Some(index) = self.rows.iter().position(|row| row.key() == key)
+        {
+            self.state.select(Some(index));
+            return;
         }
         self.state.select(Some(0));
     }
@@ -1511,6 +1513,8 @@ mod tests {
     #[cfg(unix)]
     use crate::test_utils::EnvGuard;
     use crate::tmux::{TmuxPane, TmuxSession};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::collections::HashMap;
     #[cfg(unix)]
     use std::fs;
@@ -1646,6 +1650,10 @@ esac
 
     fn passthrough_filter() -> PassthroughSearch {
         PassthroughSearch
+    }
+
+    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
+        buffer.content().iter().map(|cell| cell.symbol()).collect()
     }
 
     #[test]
@@ -2015,6 +2023,25 @@ esac
         assert_eq!(widths.context, 0);
         assert!(widths.session > 0);
         assert!(widths.status > 0);
+    }
+
+    #[test]
+    fn draw_table_omits_context_column_on_small_screens() {
+        let sessions = vec![session_row(
+            "@1",
+            "this-is-a-long-session-name-that-needs-the-space",
+        )];
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        let backend = TestBackend::new(40, 6);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal.draw(|frame| app.draw(frame)).expect("draw app");
+        let text = buffer_text(terminal.backend().buffer());
+
+        assert!(text.contains("Session"));
+        assert!(text.contains("Status"));
+        assert!(!text.contains("Context"));
+        assert!(!text.contains("ctx"));
     }
 
     #[test]
