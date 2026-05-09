@@ -214,14 +214,14 @@ pub fn run_prompts(provider: Option<InitTool>, option: Option<InitPromptOption>)
 }
 
 fn render_prompts(provider: Option<InitTool>, option: Option<InitPromptOption>) -> Result<String> {
-    if let (Some(provider), Some(option)) = (provider, option) {
-        if !provider_supports_prompt_option(provider, option) {
-            return Ok(format!(
-                "{} does not support {} prompts.",
-                prompt_provider_name(provider),
-                option
-            ));
-        }
+    if let (Some(provider), Some(option)) = (provider, option)
+        && !provider_supports_prompt_option(provider, option)
+    {
+        return Ok(format!(
+            "{} does not support {} prompts.",
+            prompt_provider_name(provider),
+            option
+        ));
     }
 
     if option == Some(InitPromptOption::AgentsMd) {
@@ -366,7 +366,7 @@ fn hook_config_snippet(tool: InitTool) -> Result<String> {
         InitTool::Codex => bail!("codex does not support hooks"),
     }
 
-    Ok(serde_json::to_string_pretty(&root).context("serialize hook config")?)
+    serde_json::to_string_pretty(&root).context("serialize hook config")
 }
 
 fn resolve_tool(
@@ -808,10 +808,10 @@ fn array_field<'a>(object: &'a mut Map<String, Value>, key: &str) -> Result<&'a 
 }
 
 fn write_file_if_changed(path: &Path, content: &[u8]) -> Result<bool> {
-    if let Ok(existing) = fs::read(path) {
-        if existing == content {
-            return Ok(false);
-        }
+    if let Ok(existing) = fs::read(path)
+        && existing == content
+    {
+        return Ok(false);
     }
 
     let parent = path

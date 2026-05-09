@@ -95,10 +95,10 @@ fn is_amazon_linux_2_from_os_release(contents: &str) -> bool {
 }
 
 fn is_amazon_linux_2() -> bool {
-    if let Ok(os_release) = fs::read_to_string("/etc/os-release") {
-        if is_amazon_linux_2_from_os_release(&os_release) {
-            return true;
-        }
+    if let Ok(os_release) = fs::read_to_string("/etc/os-release")
+        && is_amazon_linux_2_from_os_release(&os_release)
+    {
+        return true;
     }
 
     if let Ok(system_release) = fs::read_to_string("/etc/system-release") {

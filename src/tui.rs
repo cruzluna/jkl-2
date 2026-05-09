@@ -16,6 +16,8 @@ use nucleo::{Config as NucleoConfig, Matcher as NucleoMatcher};
 const DATA_NOT_RECEIVED: &str = "-";
 // TODO: Will make this configurable in the future.
 const PANE_LABEL_MAX_WIDTH: usize = 10;
+const MIN_SESSION_WIDTH_WITH_CONTEXT: u16 = 20;
+const MIN_CONTEXT_WIDTH: u16 = 12;
 const INFO_TEXT: &str = "(?) help | (Esc/Ctrl+C) back/quit | (/) search | (Enter) switch | (↑/↓) move | (g/G) top/bottom | (0-9/Opt-a..z) jump | (l/h) expand/collapse | (L) toggle all | (x) delete selected | (r) refresh";
 const HELP_FEEDBACK_TEXT: &str =
     "Feedback: create an issue at https://github.com/cruzluna/jkl-2/issues";
@@ -47,6 +49,8 @@ pub enum TuiError {
     BackendFailure(String),
     #[error("{0}")]
     ContextResolutionFailure(String),
+    #[error("{0}")]
+    ConfigFailure(String),
     #[error("Search failure: {0}")]
     SearchFailure(String),
     #[error("Terminal I/O error: {0}")]
@@ -65,6 +69,12 @@ fn context_resolution_failure(source: impl std::fmt::Display) -> TuiError {
     TuiError::ContextResolutionFailure(message)
 }
 
+fn config_failure(source: impl std::fmt::Display) -> TuiError {
+    let message = source.to_string();
+    error!("tui config failure: {message}");
+    TuiError::ConfigFailure(message)
+}
+
 fn search_failure(message: String) -> TuiError {
     error!("tui search failure: {message}");
     TuiError::SearchFailure(message)
@@ -72,6 +82,12 @@ fn search_failure(message: String) -> TuiError {
 
 pub fn run() -> Result<(), TuiError> {
     info!("tui starting");
+    let config = crate::config::load_config().map_err(config_failure)?;
+    info!(
+        "tui loaded config features.tui_context={}",
+        config.features.tui_context
+    );
+
     let sessions = crate::tmux::list_sessions().map_err(backend_failure)?;
     info!(
         "tui loaded {} tmux sessions: {:?}",
@@ -88,7 +104,7 @@ pub fn run() -> Result<(), TuiError> {
     let items = build_sessions(sessions, contexts, panes);
     info!("tui built {} session rows", items.len());
 
-    let mut app = App::new(items)?;
+    let mut app = App::new(items, config.features)?;
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
     ratatui::restore();
@@ -195,6 +211,7 @@ impl RowItem {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 enum ListViewModes {
     /// Default mode when launching
     NormalMode,
@@ -310,12 +327,16 @@ struct App<S: SessionSearch> {
     mode: ListViewModes,
     expanded_sessions: HashSet<String>,
     filter: S,
+    features: crate::config::FeatureConfig,
 }
 
 impl App<NucleoSessionSearch> {
     /// Creates a list view of sessions and panes
-    fn new(sessions: Vec<SessionRow>) -> Result<Self, TuiError> {
-        Self::new_with_filter(sessions, NucleoSessionSearch::new())
+    fn new(
+        sessions: Vec<SessionRow>,
+        features: crate::config::FeatureConfig,
+    ) -> Result<Self, TuiError> {
+        Self::new_with_features_and_filter(sessions, features, NucleoSessionSearch::new())
     }
 }
 
@@ -323,7 +344,20 @@ impl<S: SessionSearch> App<S> {
     /// Creates a list view with an injected search backend.
     ///
     /// This keeps search behavior testable without heap allocation or dynamic dispatch.
+    #[cfg(test)]
     fn new_with_filter(sessions: Vec<SessionRow>, filter: S) -> Result<Self, TuiError> {
+        Self::new_with_features_and_filter(
+            sessions,
+            crate::config::FeatureConfig::default(),
+            filter,
+        )
+    }
+
+    fn new_with_features_and_filter(
+        sessions: Vec<SessionRow>,
+        features: crate::config::FeatureConfig,
+        filter: S,
+    ) -> Result<Self, TuiError> {
         let search_candidates = build_search_candidates(&sessions);
         let mut app = Self {
             state: TableState::default(),
@@ -342,6 +376,7 @@ impl<S: SessionSearch> App<S> {
             mode: ListViewModes::NormalMode,
             expanded_sessions: HashSet::new(),
             filter,
+            features,
         };
         app.rebuild_rows();
         app.ensure_selection();
@@ -566,11 +601,11 @@ impl<S: SessionSearch> App<S> {
             self.state.select(None);
             return;
         }
-        if let Some(key) = previous {
-            if let Some(index) = self.rows.iter().position(|row| row.key() == key) {
-                self.state.select(Some(index));
-                return;
-            }
+        if let Some(key) = previous
+            && let Some(index) = self.rows.iter().position(|row| row.key() == key)
+        {
+            self.state.select(Some(index));
+            return;
         }
         self.state.select(Some(0));
     }
@@ -775,9 +810,14 @@ impl<S: SessionSearch> App<S> {
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let header = Row::new(["Session", "Status", "Context"])
-            .style(Style::default().add_modifier(Modifier::BOLD));
         let widths = self.table_column_widths(area);
+        let show_context = widths.context > 0;
+        let header = if show_context {
+            Row::new(["Session", "Status", "Context"])
+        } else {
+            Row::new(["Session", "Status"])
+        }
+        .style(Style::default().add_modifier(Modifier::BOLD));
 
         let rows = self.rows.iter().enumerate().map(|(index, item)| {
             let mut base_style = if index % 2 == 0 {
@@ -788,31 +828,39 @@ impl<S: SessionSearch> App<S> {
             if matches!(item, RowItem::Pane(_)) {
                 base_style = base_style.add_modifier(Modifier::DIM);
             }
-            Row::new(vec![
+            let mut cells = vec![
                 Cell::from(truncate_with_ellipsis(
                     &self.row_label(item),
                     widths.session as usize,
                 )),
                 Cell::from(status_text(row_status(item))).style(status_style(row_status(item))),
-                Cell::from(truncate_with_ellipsis(
+            ];
+            if show_context {
+                cells.push(Cell::from(truncate_with_ellipsis(
                     &row_context(item),
                     widths.context as usize,
-                )),
-            ])
-            .style(base_style)
+                )));
+            }
+            Row::new(cells).style(base_style)
         });
 
-        let table = Table::new(
-            rows,
-            [
+        let constraints = if show_context {
+            vec![
                 Constraint::Length(widths.session),
                 Constraint::Length(widths.status),
                 Constraint::Length(widths.context),
-            ],
-        )
-        .header(header)
-        .block(Block::default().borders(Borders::ALL))
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            ]
+        } else {
+            vec![
+                Constraint::Length(widths.session),
+                Constraint::Length(widths.status),
+            ]
+        };
+
+        let table = Table::new(rows, constraints)
+            .header(header)
+            .block(Block::default().borders(Borders::ALL))
+            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
         frame.render_stateful_widget(table, area, &mut self.state);
     }
@@ -916,8 +964,12 @@ impl<S: SessionSearch> App<S> {
         #[allow(clippy::cast_possible_truncation)]
         let context_header_width = UnicodeWidthStr::width("Context") as u16;
 
-        // Account for table borders and the default one-cell spacing between three columns.
+        // Account for table borders first; column spacing depends on the visible columns.
         let inner_width = area.width.saturating_sub(2);
+        if !self.features.tui_context {
+            return self.session_status_column_widths(inner_width);
+        }
+
         let usable_width = inner_width.saturating_sub(2);
         if usable_width == 0 {
             return TableColumnWidths {
@@ -927,54 +979,58 @@ impl<S: SessionSearch> App<S> {
             };
         }
 
-        let status_width = self
-            .widths
-            .status
-            .max(status_header_width)
-            .min(usable_width);
+        let status_width = self.status_column_width(status_header_width, usable_width);
         let remaining_width = usable_width.saturating_sub(status_width);
-        if remaining_width == 0 {
-            return TableColumnWidths {
-                session: 0,
-                status: status_width,
-                context: 0,
-            };
+        let min_session_width = session_header_width
+            .max(MIN_SESSION_WIDTH_WITH_CONTEXT)
+            .min(remaining_width);
+        let min_context_width = context_header_width.max(MIN_CONTEXT_WIDTH);
+        if remaining_width < min_session_width.saturating_add(min_context_width) {
+            return self.session_status_column_widths(inner_width);
         }
 
-        // Keep session constrained so context remains visible on medium terminal widths.
-        let max_session_by_ratio = remaining_width.saturating_mul(45).saturating_div(100);
-        let min_session_width = if remaining_width > 1 {
-            session_header_width.min(remaining_width - 1)
-        } else {
-            0
-        };
-        let mut session_width = self
+        let max_session_width = remaining_width.saturating_sub(min_context_width);
+        let session_width = self
             .widths
             .session
             .max(session_header_width)
-            .min(max_session_by_ratio.max(min_session_width));
-
-        let mut context_width = remaining_width.saturating_sub(session_width);
-        let min_context_width = if remaining_width > min_session_width {
-            context_header_width.min(remaining_width - min_session_width)
-        } else {
-            0
-        };
-        if context_width < min_context_width {
-            let deficit = min_context_width - context_width;
-            session_width = session_width.saturating_sub(deficit);
-            context_width = remaining_width.saturating_sub(session_width);
-        }
-        if context_width == 0 && remaining_width > 0 {
-            context_width = 1;
-            session_width = remaining_width.saturating_sub(context_width);
-        }
+            .min(max_session_width)
+            .max(min_session_width);
+        let context_width = remaining_width.saturating_sub(session_width);
 
         TableColumnWidths {
             session: session_width,
             status: status_width,
             context: context_width,
         }
+    }
+
+    fn session_status_column_widths(&self, inner_width: u16) -> TableColumnWidths {
+        #[allow(clippy::cast_possible_truncation)]
+        let status_header_width = UnicodeWidthStr::width("Status") as u16;
+        let usable_width = inner_width.saturating_sub(1);
+        if usable_width == 0 {
+            return TableColumnWidths {
+                session: 0,
+                status: 0,
+                context: 0,
+            };
+        }
+
+        let status_width = self.status_column_width(status_header_width, usable_width);
+        let session_width = usable_width.saturating_sub(status_width);
+        TableColumnWidths {
+            session: session_width,
+            status: status_width,
+            context: 0,
+        }
+    }
+
+    fn status_column_width(&self, status_header_width: u16, usable_width: u16) -> u16 {
+        self.widths
+            .status
+            .max(status_header_width)
+            .min(usable_width)
     }
 
     fn measure_widths(&self) -> ColumnWidths {
@@ -1457,6 +1513,8 @@ mod tests {
     #[cfg(unix)]
     use crate::test_utils::EnvGuard;
     use crate::tmux::{TmuxPane, TmuxSession};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::collections::HashMap;
     #[cfg(unix)]
     use std::fs;
@@ -1592,6 +1650,10 @@ esac
 
     fn passthrough_filter() -> PassthroughSearch {
         PassthroughSearch
+    }
+
+    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
+        buffer.content().iter().map(|cell| cell.symbol()).collect()
     }
 
     #[test]
@@ -1927,10 +1989,59 @@ esac
         let widths = app.table_column_widths(Rect::new(0, 0, 60, 10));
         assert!(widths.session < app.widths.session);
         assert!(usize::from(widths.context) >= UnicodeWidthStr::width("Context"));
+        assert!(widths.session > widths.context);
 
         let rendered_label =
             truncate_with_ellipsis(&app.row_label(&app.rows[0]), widths.session as usize);
         assert!(rendered_label.ends_with("..."));
+    }
+
+    #[test]
+    fn table_column_widths_hide_context_on_small_screens() {
+        let sessions = vec![session_row(
+            "@1",
+            "this-is-a-long-session-name-that-needs-the-space",
+        )];
+        let app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+
+        let widths = app.table_column_widths(Rect::new(0, 0, 40, 10));
+
+        assert_eq!(widths.context, 0);
+        assert!(widths.session > 0);
+        assert!(widths.status > 0);
+    }
+
+    #[test]
+    fn table_column_widths_hide_context_when_feature_disabled() {
+        let sessions = vec![session_row("@1", "alpha")];
+        let features = crate::config::FeatureConfig { tui_context: false };
+        let app = App::new_with_features_and_filter(sessions, features, passthrough_filter())
+            .expect("app");
+
+        let widths = app.table_column_widths(Rect::new(0, 0, 100, 10));
+
+        assert_eq!(widths.context, 0);
+        assert!(widths.session > 0);
+        assert!(widths.status > 0);
+    }
+
+    #[test]
+    fn draw_table_omits_context_column_on_small_screens() {
+        let sessions = vec![session_row(
+            "@1",
+            "this-is-a-long-session-name-that-needs-the-space",
+        )];
+        let mut app = App::new_with_filter(sessions, passthrough_filter()).expect("app");
+        let backend = TestBackend::new(40, 6);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal.draw(|frame| app.draw(frame)).expect("draw app");
+        let text = buffer_text(terminal.backend().buffer());
+
+        assert!(text.contains("Session"));
+        assert!(text.contains("Status"));
+        assert!(!text.contains("Context"));
+        assert!(!text.contains("ctx"));
     }
 
     #[test]
@@ -2231,6 +2342,12 @@ esac
     fn context_resolution_failure_preserves_message() {
         let error = context_resolution_failure("failed to load contexts");
         assert_eq!(error.to_string(), "failed to load contexts");
+    }
+
+    #[test]
+    fn config_failure_preserves_message() {
+        let error = config_failure("failed to load config");
+        assert_eq!(error.to_string(), "failed to load config");
     }
 
     #[test]
