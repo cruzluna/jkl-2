@@ -199,6 +199,13 @@ set -g @jkl_key_pane_state 'P'
 set -g @jkl_key_edit 'none'
 ```
 
+You can configure the agent view popup size. Width and height accept tmux popup dimensions, including integer cells or percentages. Defaults are `40%` by `40%`.
+
+```tmux
+set -g @jkl_agent_view_popup_width '80'
+set -g @jkl_agent_view_popup_height '20'
+```
+
 By default the plugin does not override existing tmux/user bindings. Recommended for a fresh setup: force the jkl defaults to bind even if tmux already has a key there:
 
 ```tmux
