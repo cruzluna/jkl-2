@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use self_update::backends::github::ReleaseList;
 use self_update::update::Release;
 use std::fs;
+use std::io::{self, IsTerminal};
 
 const REPO_OWNER: &str = "cruzluna";
 const REPO_NAME: &str = "jkl-2";
@@ -218,40 +219,67 @@ pub fn run(channel: UpdateChannel) -> Result<()> {
     Ok(())
 }
 
+fn tty_emphasis() -> (&'static str, &'static str, &'static str, &'static str) {
+    if io::stdout().is_terminal() {
+        (
+            "\x1b[38;5;214m", // accent (matches install.sh ORANGE)
+            "\x1b[1m",
+            "\x1b[2m",
+            "\x1b[0m",
+        )
+    } else {
+        ("", "", "", "")
+    }
+}
+
 fn print_post_update_notes() {
-    println!("To refresh Fig autocomplete, run: jkl init fig-autocomplete");
+    let (accent, bold, dim, reset) = tty_emphasis();
+    const RULE: &str = "──────────────────────────────────────────────────────────────";
+
     println!();
-    println!("Helpful next steps ✨");
+    println!("{dim}{RULE}{reset}");
+    println!("{accent}{bold} ✨Next steps ✨{reset}");
+    println!("{dim}{RULE}{reset}");
     println!();
-    println!("Claude Code prompt");
+    println!("{dim}Tip:{reset} run `jkl init prompts` anytime to print this block again.");
+    println!();
+
+    println!("{accent}▸{reset} {bold}Shell completion{reset}");
+    println!("    {dim}jkl init fig-autocomplete{reset}");
+    println!();
+
+    println!("{accent}▸{reset} {bold}Claude Code hooks{reset}");
     println!(
-        "  Paste this into Claude Code to mark the current tmux pane as working when you send a prompt, and waiting when Claude stops."
+        "    {dim}Paste into Claude Code so the current pane is \"working\" while you prompt and \"waiting\" when Claude stops.{reset}"
     );
-    println!("  UserPromptSubmit:");
-    println!("    {WORKING_HOOK_COMMAND}");
-    println!("  Stop:");
-    println!("    {WAITING_HOOK_COMMAND}");
+    println!("    {dim}UserPromptSubmit:{reset}");
+    println!("        {WORKING_HOOK_COMMAND}");
+    println!("    {dim}Stop:{reset}");
+    println!("        {WAITING_HOOK_COMMAND}");
     println!();
-    println!("Kiro CLI prompt");
-    println!(
-        "  Paste this into Kiro CLI to mark the current tmux pane as working when you send a prompt, and waiting when Kiro stops."
-    );
-    println!("  userPromptSubmit:");
-    println!("    {WORKING_HOOK_COMMAND}");
-    println!("  stop:");
-    println!("    {WAITING_HOOK_COMMAND}");
+
+    println!("{accent}▸{reset} {bold}Kiro CLI hooks{reset}");
+    println!("    {dim}Paste into Kiro CLI for the same working / waiting behavior.{reset}");
+    println!("    {dim}userPromptSubmit:{reset}");
+    println!("        {WORKING_HOOK_COMMAND}");
+    println!("    {dim}stop:{reset}");
+    println!("        {WAITING_HOOK_COMMAND}");
     println!();
-    println!("tmux setup prompt");
+
+    println!("{accent}▸{reset} {bold}tmux + TPM{reset}");
+    println!("    {dim}Paste into your agent to enable the jkl-2 plugin in ~/.tmux.conf:{reset}");
+    println!("        set -g @plugin 'cruzluna/jkl-2'");
+    println!("        set -g @jkl_force_bind_keys 'on'");
+    println!("        run '~/.tmux/plugins/tpm/tpm'");
     println!(
-        "  Paste this into your agent to update ~/.tmux.conf so the jkl-2 tmux plugin is enabled:"
+        "    {dim}Optional — TUI agent view popup size (cells or %; plugin default 40% by 40%):{reset}"
     );
-    println!("    set -g @plugin 'cruzluna/jkl-2'");
-    println!("    set -g @jkl_force_bind_keys 'on'");
-    println!("    run '~/.tmux/plugins/tpm/tpm'");
-    println!("  Then reload tmux. If TPM still needs to install the plugin, run:");
-    println!("    tmux run-shell \"~/.tmux/plugins/tpm/bin/install_plugins\"");
+    println!("        set -g @jkl_agent_view_popup_width '80'");
+    println!("        set -g @jkl_agent_view_popup_height '20'");
+    println!("    {dim}Reload tmux. If TPM has not installed the plugin yet:{reset}");
+    println!("        tmux run-shell \"~/.tmux/plugins/tpm/bin/install_plugins\"");
     println!(
-        "  After reloading, open the list right away with <prefix> f (or your configured agent view key)."
+        "    {dim}Then open the list with <prefix> f (or your configured agent view key).{reset}"
     );
 }
 

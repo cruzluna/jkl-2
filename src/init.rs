@@ -318,7 +318,7 @@ fn render_agents_append_snippet() -> String {
 
 fn render_tmux_prompt(tools: &[InitTool]) -> String {
     format!(
-        "tmux.conf\n\nProviders: {}\nAdd these lines to `~/.tmux.conf`:\n{}\nOptional agent view popup size overrides:\n{}\nThen reload tmux. If TPM still needs to install the plugin, run:\n{}\nAfter reloading, open the list right away with `<prefix> f` (or your configured agent view key).",
+        "tmux.conf\n\nProviders: {}\nAdd these lines to `~/.tmux.conf`:\n{}\nOptional — configure the TUI agent view popup size (tmux popup dimensions; cells or percentages; plugin defaults to 40% by 40%):\n{}\nThen reload tmux. If TPM still needs to install the plugin, run:\n{}\nAfter reloading, open the list right away with `<prefix> f` (or your configured agent view key).",
         render_tool_list(tools),
         TMUX_CONF_LINES
             .iter()
