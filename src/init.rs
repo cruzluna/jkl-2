@@ -24,6 +24,10 @@ const TMUX_CONF_LINES: [&str; 3] = [
     "set -g @jkl_force_bind_keys 'on'",
     "run '~/.tmux/plugins/tpm/tpm'",
 ];
+const TMUX_CONF_OPTIONAL_LINES: [&str; 2] = [
+    "set -g @jkl_agent_view_popup_width '80'",
+    "set -g @jkl_agent_view_popup_height '20'",
+];
 const AGENTS_MD_APPEND_LINES: [&str; 10] = [
     "## jkl",
     "- When working inside tmux, use `jkl upsert` to keep jkl metadata current.",
@@ -314,9 +318,14 @@ fn render_agents_append_snippet() -> String {
 
 fn render_tmux_prompt(tools: &[InitTool]) -> String {
     format!(
-        "tmux.conf\n\nProviders: {}\nAdd these lines to `~/.tmux.conf`:\n{}\nThen reload tmux. If TPM still needs to install the plugin, run:\n{}\nAfter reloading, open the list right away with `<prefix> f` (or your configured agent view key).",
+        "tmux.conf\n\nProviders: {}\nAdd these lines to `~/.tmux.conf`:\n{}\nOptional agent view popup size overrides:\n{}\nThen reload tmux. If TPM still needs to install the plugin, run:\n{}\nAfter reloading, open the list right away with `<prefix> f` (or your configured agent view key).",
         render_tool_list(tools),
         TMUX_CONF_LINES
+            .iter()
+            .map(|line| format!("- {line}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        TMUX_CONF_OPTIONAL_LINES
             .iter()
             .map(|line| format!("- {line}"))
             .collect::<Vec<_>>()

@@ -12,6 +12,19 @@ get_tmux_option() {
   fi
 }
 
+get_tmux_popup_dimension() {
+  local option="$1"
+  local default="$2"
+  local value
+
+  value="$(get_tmux_option "$option" "$default")"
+  if [[ "$value" =~ ^[0-9]+%?$ ]]; then
+    echo "$value"
+  else
+    echo "$default"
+  fi
+}
+
 resolve_binding_key() {
   local option_name="$1"
   local default_key="$2"
@@ -65,7 +78,10 @@ bind_prefix_key() {
   tmux bind-key "$key" "$@"
 }
 
-bind_prefix_key "@jkl_key_agent_view" "f" "@jkl_key_tui" display-popup -E -w 40% -h 40% "jkl tui"
+agent_view_popup_width="$(get_tmux_popup_dimension "@jkl_agent_view_popup_width" "40%")"
+agent_view_popup_height="$(get_tmux_popup_dimension "@jkl_agent_view_popup_height" "40%")"
+
+bind_prefix_key "@jkl_key_agent_view" "f" "@jkl_key_tui" display-popup -E -w "$agent_view_popup_width" -h "$agent_view_popup_height" "jkl tui"
 bind_prefix_key "@jkl_key_context" "W" command-prompt -p "Context for #S:" "run-shell \"jkl upsert '#S' --session-id '#{session_id}' --context '%%'\""
 bind_prefix_key "@jkl_key_edit" "e" display-popup -E -w 40% -h 40% "nvim ~/.config/jkl/session_context.json"
 bind_prefix_key "@jkl_key_pane_state" "S" run-shell 'tmux display-popup -E -w 30% -h 20% "jkl tui --pane-state --session-name \"#{session_name}\" --pane-id \"#{pane_id}\""'
