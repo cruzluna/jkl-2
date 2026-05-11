@@ -12,6 +12,8 @@
 
 - `tmux`
 
+Quick links: [Install](#install) · [Getting started](#getting-started) · [Update](#update) · [Uninstall](#uninstall) · [Usage](#usage) · [Tmux plugin (TPM)](#tmux-plugin-tpm) · [Integrations](#integrations) · [Session context](#session-context) · [Development](#development)
+
 ## Install
 
 ### Binary (recommended)
@@ -66,6 +68,23 @@ cargo install --git https://github.com/cruzluna/jkl-2
 
 If needed, ensure `~/.cargo/bin` is on your `PATH`.
 
+## Getting started
+
+1. **Configure with a coding agent**
+
+> 💡 paste something like this into your agent session:
+
+   ```bash
+   claude "Help me set up my tmux.conf and Claude Code hooks with the jkl CLI/TUI. Run jkl init prompts"
+   ```
+
+    See [Integrations](#integrations) for more.
+
+
+2. Open in tmux using **`<prefix> f`**.
+
+See [Usage](#usage) for TUI shortcuts while the popup is open.
+
 ## Update
 
 ```
@@ -119,7 +138,8 @@ Also remove local metadata/logs in `~/.config/jkl`:
 jkl uninstall --purge-data
 ```
 
-### Release assets
+<details>
+<summary><strong>Release asset filenames</strong> (for maintainers — expected GitHub archive names)</summary>
 
 The update command and install script expect GitHub release assets named:
 
@@ -133,37 +153,33 @@ The update command and install script expect GitHub release assets named:
 
 Each archive should contain the `jkl` binary at the top level.
 
+</details>
+
 ## Usage
 
-- Launch the TUI: `jkl tui`
-- Session rows are ordered by most recent tmux usage (most recent first)
-- Quit the TUI: `q`, `Esc`, or `Ctrl+C` (Ctrl+C exits search/help first)
-- Open keybinding help: `?`
-- In help mode, return to list view: `q`, `Q`, `Esc`, or `Ctrl+C`
-- Navigate rows: `↑`/`↓` or `j`/`k`
-- Expand/collapse selected session details (windows + panes): `l`/`h`
-- Toggle all session details (expand-all / collapse-all): `L`
-- Delete selected session/window/pane: `x`, then `x` to confirm (any other key cancels)
-- Refresh pane list: `r`
-- Search sessions/windows/panes: `/` (type to filter, `Esc` to exit search)
-- Switch to session: `Enter`
-- Upsert session metadata: `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]`
-- Upsert pane metadata: `jkl upsert <session_name...> --pane-id <pane_id> [--window-id <window_id> [--window-name <window_name>]] [--status <status>] [--context <text...>]`
-- Rename session entry: `jkl rename <session_id> <session_name...>`
-- Sync persisted metadata with live tmux state: `jkl sync`
-- Update from stable channel: `jkl update`
-- Update from master pre-release channel: `jkl update --pre-release`
-- Update from dev preview channel: `jkl update --pre-release --dev`
-- Interactive integration setup: `jkl init`
-- Non-interactive hooks setup: `jkl init hooks --tool <claude|cursor|kiro> --scope <local|global> --non-interactive [--agent-config-dir <dir> (kiro only)] [--agent-config <path...> (kiro/cursor)]`
-- Non-interactive copy/paste prompts: `jkl init prompts [--provider <claude|codex|cursor|kiro>] [--option <hooks|AGENTS.md|tmux.conf>]`
-- Refresh Fig autocomplete: `jkl init fig-autocomplete`
-- Uninstall binary from current location: `jkl uninstall [--purge-data]`
-- Pane status selector: `jkl tui --pane-state --session-name <session_name...> --pane-id <pane_id>`
+### TUI (`jkl tui`)
 
-Multi-word session names or context can be passed without quotes; use `--` to terminate positional values if needed.
+Runs **inside tmux**. Session rows are ordered by **most recently used tmux session first**.
 
-## Tmux Plugin (TPM)
+| Action | Keys |
+| --- | --- |
+| Quit | `q`, `Esc`, or `Ctrl+C` (`Ctrl+C` clears search/help first) |
+| Keybinding help | `?`; leave help with `q`, `Q`, `Esc`, or `Ctrl+C` |
+| Move selection | `↑` / `↓` or `j` / `k` |
+| Expand / collapse selected session | `l` / `h` |
+| Expand / collapse all sessions | `L` |
+| Delete selected session, window, or pane | `x`, then **`x`** to confirm (anything else cancels) |
+| Refresh pane list | `r` |
+| Search panes/sessions/windows | `/`; `Esc` exits search |
+| Switch to highlighted session | `Enter` |
+
+**Pane status picker:** `jkl tui --pane-state --session-name <session_name…> --pane-id <pane_id>`.
+
+Coding agents invoking `jkl` should assume a **tmux** environment and honor session/pane identifiers from tmux.
+
+Multi-word session names or context arguments often need no quoting; use `--` to end positional tokens if parsing is ambiguous.
+
+## Tmux plugin (TPM)
 
 Add the plugin and reload TPM:
 
@@ -174,9 +190,10 @@ set -g @plugin 'cruzluna/jkl-2'
 run '~/.tmux/plugins/tpm/tpm'
 ```
 
-If tpm fails to download plugin: 
-``` bash
-$ tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
+If tpm fails to download the plugin:
+
+```bash
+tmux run-shell "~/.tmux/plugins/tpm/bin/install_plugins"
 ```
 
 Default prefix bindings (only set when the key is currently unbound):
@@ -360,20 +377,7 @@ Docs:
 
 ### Copy/paste prompts
 
-Print the same copy/paste prompts shown by the installer and `jkl update`:
-
-```
-jkl init prompts
-```
-
-Filter by integration provider or prompt type:
-
-```
-jkl init prompts --provider claude --option hooks
-jkl init prompts --provider codex --option AGENTS.md
-jkl init prompts --option AGENTS.md
-jkl init prompts --option tmux.conf
-```
+All `jkl init prompts` options and examples are under [Getting started](#getting-started).
 
 ### Fig autocomplete
 
@@ -387,7 +391,7 @@ Refresh autocomplete with:
 jkl init fig-autocomplete
 ```
 
-## Session Context
+## Session context
 
 The TUI reads optional metadata from `~/.config/jkl/session_context.json`. If the file does not exist, it is created with `{}` the first time you run the TUI.
 
@@ -450,44 +454,4 @@ Status values:
 - Point tmux at a test server: `tmux -L test list-sessions`
 - Use a temp context file: `HOME=/tmp/jkl-dev cargo run -- tui`
 
-## Agent Instructions
-
-Use this tool to update session and pane statuses; update pane context when needed. Do not modify session context unless explicitly requested. The tool runs inside tmux, so always include tmux context (session name and pane ID) when updating metadata. Use `jkl --help` to review available commands.
-
-`jkl upsert` details:
-
-```
-Usage: jkl upsert [OPTIONS] [SESSION_NAME]...
-
-Arguments:
-  [SESSION_NAME]...
-
-Options:
-      --session-id <SESSION_ID>
-      --pane-id <PANE_ID>
-      --window-id <WINDOW_ID>
-      --window-name <WINDOW_NAME>
-      --status <STATUS>
-      --context <CONTEXT>...
-```
-
-`--window-name` requires `--window-id`.
-
-Examples:
-
-- `jkl upsert <session_name...> [--session-id <session_id>] [--status <status>] [--context <text...>]` upserts session metadata.
-- `jkl upsert <session_name...> --pane-id <pane_id> [--window-id <window_id> [--window-name <window_name>]] [--status <status>] [--context <text...>]` upserts pane metadata.
-- `jkl sync` removes stale session/pane metadata and migrates renamed sessions using tmux `session_id`.
-
-Sample commands:
-
-```
-# Update session status
-jkl upsert "work" --status working
-
-# Update pane status
-jkl upsert "work" --pane-id %1 --status waiting
-
-# Update pane context
-jkl upsert "work" --pane-id %1 --context "debugging timeout"
-```
+Contributor commands (fmt, Clippy, `cargo test --locked`): see [`AGENTS.md`](AGENTS.md).
