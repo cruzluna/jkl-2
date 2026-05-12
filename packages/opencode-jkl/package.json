@@ -1,0 +1,36 @@
+{
+  "name": "opencode-jkl",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that syncs jkl pane status from session lifecycle events.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": "./index.js",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "jkl",
+    "tmux"
+  ],
+  "author": "cruzluna",
+  "license": "MIT",
+  "homepage": "https://github.com/cruzluna/jkl-2#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cruzluna/jkl-2.git",
+    "directory": "packages/opencode-jkl"
+  },
+  "bugs": {
+    "url": "https://github.com/cruzluna/jkl-2/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

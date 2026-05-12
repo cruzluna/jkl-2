@@ -39,7 +39,7 @@ The installer adds:
 
 - `jkl`
 
-After install, the script prints copy/paste prompts for Claude Code hooks, Kiro CLI hooks, and the `~/.tmux.conf` lines needed for the `jkl-2` TPM plugin. Reprint them later with `jkl init prompts`.
+After install, the script prints copy/paste prompts for Claude Code hooks, Kiro CLI hooks, Cursor hooks, the OpenCode npm plugin, and the `~/.tmux.conf` lines needed for the `jkl-2` TPM plugin. Reprint them later with `jkl init prompts`.
 
 ### Release Asset (manual)
 
@@ -122,7 +122,7 @@ Then refresh Fig autocomplete:
 jkl init fig-autocomplete
 ```
 
-`jkl update` also prints the same Claude Code/Kiro hook prompts and the `~/.tmux.conf` prompt after the update finishes. Use `jkl init prompts` to print them again on demand.
+`jkl update` also prints the same integration hook prompts and the `~/.tmux.conf` prompt after the update finishes. Use `jkl init prompts` to print them again on demand.
 
 ## Uninstall
 
@@ -374,6 +374,48 @@ If you prefer scripts instead of inline commands, note the path difference from 
 Docs:
 
 - https://cursor.com/docs/agent/hooks
+
+### OpenCode npm plugin
+
+OpenCode loads npm plugins from the `plugin` array in `opencode.json`. The `opencode-jkl` package listens for OpenCode session status events and updates the current tmux pane in `jkl`: `busy` and `retry` become `working`, while `idle` becomes `waiting`.
+
+Initialize automatically:
+
+```
+jkl init hooks --tool opencode --scope local --non-interactive
+```
+
+To target a specific OpenCode config file:
+
+```
+jkl init hooks --tool opencode --scope local --non-interactive --agent-config ./opencode.json
+```
+
+OpenCode plugin targeting behavior:
+
+- `--agent-config` updates exactly the listed OpenCode config files.
+- In non-interactive mode, if `--agent-config` is omitted, jkl targets the default path from `--scope` (`<project>/opencode.json` or `~/.config/opencode/opencode.json`).
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-jkl"]
+}
+```
+
+Package source lives at `packages/opencode-jkl`. Maintainers can validate and publish it with:
+
+```
+cd packages/opencode-jkl
+npm test
+npm pack --dry-run
+npm publish --access public
+```
+
+Docs:
+
+- https://opencode.ai/docs/plugins/
+- https://opencode.ai/docs/config#plugins
 
 ### Copy/paste prompts
 
