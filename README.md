@@ -403,11 +403,12 @@ OpenCode plugin targeting behavior:
 }
 ```
 
-Package source lives at `packages/opencode-jkl`. Maintainers can validate and publish it with:
+TypeScript package source lives at `packages/opencode-jkl`. Maintainers can validate and publish it with:
 
 ```
 cd packages/opencode-jkl
 npm test
+npm run typecheck
 npm pack --dry-run
 npm publish --access public
 ```

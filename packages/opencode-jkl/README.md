@@ -1,6 +1,6 @@
 # opencode-jkl
 
-OpenCode plugin that syncs the current tmux pane into the [`jkl`](https://github.com/cruzluna/jkl-2) status view.
+TypeScript OpenCode plugin that syncs the current tmux pane into the [`jkl`](https://github.com/cruzluna/jkl-2) status view.
 
 ## Requirements
 
@@ -38,6 +38,7 @@ From this directory:
 
 ```bash
 npm test
+npm run typecheck
 npm pack --dry-run
 npm publish --access public
 ```

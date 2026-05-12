@@ -3,15 +3,16 @@
   "version": "0.1.0",
   "description": "OpenCode plugin that syncs jkl pane status from session lifecycle events.",
   "type": "module",
-  "main": "./index.js",
-  "exports": "./index.js",
+  "main": "./index.ts",
+  "exports": "./index.ts",
   "files": [
-    "index.js",
+    "index.ts",
     "README.md"
   ],
   "scripts": {
-    "test": "node --test",
-    "pack:dry-run": "npm pack --dry-run"
+    "pack:dry-run": "npm pack --dry-run",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "opencode",
@@ -30,7 +31,9 @@
   "bugs": {
     "url": "https://github.com/cruzluna/jkl-2/issues"
   },
-  "engines": {
-    "node": ">=18"
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.14.48",
+    "@types/node": "^25.7.0",
+    "typescript": "^6.0.3"
   }
 }
