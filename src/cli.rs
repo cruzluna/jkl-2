@@ -157,7 +157,7 @@ struct InitHooksArgs {
     /// This does not update all files automatically.
     #[arg(long = "agent-config-dir", alias = "agents-dir", alias = "agent-dir")]
     agent_config_dir: Option<PathBuf>,
-    /// Explicit hook config JSON file path(s) to update (Kiro, Cursor, or OpenCode).
+    /// Explicit hook config JSON file path(s) to update (Kiro, Cursor, OpenCode, or Pi).
     #[arg(long = "agent-config", alias = "config", num_args = 1..)]
     agent_config: Option<Vec<PathBuf>>,
     /// Disable prompts; requires explicit options for deterministic automation.

@@ -39,7 +39,7 @@ The installer adds:
 
 - `jkl`
 
-After install, the script prints copy/paste prompts for Claude Code hooks, Kiro CLI hooks, Cursor hooks, the OpenCode npm plugin, and the `~/.tmux.conf` lines needed for the `jkl-2` TPM plugin. Reprint them later with `jkl init prompts`.
+After install, the script prints copy/paste prompts for Claude Code hooks, Kiro CLI hooks, Cursor hooks, the OpenCode npm plugin, the Pi npm extension, and the `~/.tmux.conf` lines needed for the `jkl-2` TPM plugin. Reprint them later with `jkl init prompts`.
 
 ### Release Asset (manual)
 
@@ -417,6 +417,48 @@ Docs:
 
 - https://opencode.ai/docs/plugins/
 - https://opencode.ai/docs/config#plugins
+
+### Pi npm extension
+
+Pi loads extension packages from the `packages` array in `.pi/settings.json` or `~/.pi/agent/settings.json`. The `pi-jkl` package listens for Pi agent lifecycle events and updates the current tmux pane in `jkl`: `agent_start` becomes `working`, while `session_start`, `agent_end`, and `session_shutdown` become `waiting`.
+
+Initialize automatically:
+
+```
+jkl init hooks --tool pi --scope local --non-interactive
+```
+
+To target a specific Pi settings file:
+
+```
+jkl init hooks --tool pi --scope local --non-interactive --agent-config .pi/settings.json
+```
+
+Pi extension targeting behavior:
+
+- `--agent-config` updates exactly the listed Pi settings files.
+- In non-interactive mode, if `--agent-config` is omitted, jkl targets the default path from `--scope` (`<project>/.pi/settings.json` or `~/.pi/agent/settings.json`).
+
+```json
+{
+  "packages": ["npm:pi-jkl"]
+}
+```
+
+TypeScript package source lives at `packages/pi-jkl`. Maintainers can validate and publish it with:
+
+```
+cd packages/pi-jkl
+npm test
+npm run typecheck
+npm pack --dry-run
+npm publish --access public
+```
+
+Docs:
+
+- https://pi.dev/docs/latest/extensions
+- https://pi.dev/docs/latest/packages
 
 ### Copy/paste prompts
 
