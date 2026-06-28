@@ -251,7 +251,7 @@ fn print_post_update_notes() {
 
     println!("{accent}▸{reset} {bold}Claude Code hooks{reset}");
     println!(
-        "    {dim}Paste into Claude Code so the current pane is \"working\" while you prompt and \"idle\" when Claude stops.{reset}"
+        "    {dim}Paste into Claude Code so the current pane is \"working\" while you prompt, \"blocked\" for permission/user prompts, and \"idle\" when Claude stops.{reset}"
     );
     println!("    {dim}UserPromptSubmit:{reset}");
     println!("        {WORKING_HOOK_COMMAND}");

@@ -190,7 +190,7 @@ print_message muted "  jkl init fig-autocomplete"
 printf "\n"
 
 print_message accent "▸ Claude Code hooks"
-print_message muted "  Paste into Claude Code so the current pane is \"working\" while you prompt and \"idle\" when Claude stops."
+print_message muted "  Paste into Claude Code so the current pane is \"working\" while you prompt, \"blocked\" for permission/user prompts, and \"idle\" when Claude stops."
 print_message muted "  UserPromptSubmit:"
 print_message info "      $WORKING_HOOK_COMMAND"
 print_message muted "  PermissionRequest / Notification permission prompts:"
