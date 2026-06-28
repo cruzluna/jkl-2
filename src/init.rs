@@ -9,10 +9,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const CLAUDE_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
+const CLAUDE_BLOCKED_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status blocked";
 const CLAUDE_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle";
 const KIRO_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
+const KIRO_BLOCKED_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status blocked";
 const KIRO_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle";
 const CURSOR_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
+const CURSOR_BLOCKED_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status blocked";
 const CURSOR_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle";
 
 const KIRO_NAME: &str = "jkl";
@@ -675,36 +678,57 @@ fn write_json_pretty(path: &Path, value: &Value) -> Result<()> {
 
 fn ensure_claude_hooks(root: &mut Value) -> Result<bool> {
     let mut changed = false;
-    changed |= ensure_claude_hook(root, "UserPromptSubmit", CLAUDE_WORKING_COMMAND)?;
-    changed |= ensure_claude_hook(root, "Stop", CLAUDE_IDLE_COMMAND)?;
+    changed |= ensure_claude_hook(root, "UserPromptSubmit", None, CLAUDE_WORKING_COMMAND)?;
+    changed |= ensure_claude_hook(root, "PermissionRequest", None, CLAUDE_BLOCKED_COMMAND)?;
+    changed |= ensure_claude_hook(
+        root,
+        "Notification",
+        Some("permission_prompt|idle_prompt|elicitation_dialog"),
+        CLAUDE_BLOCKED_COMMAND,
+    )?;
+    changed |= ensure_claude_hook(root, "Stop", None, CLAUDE_IDLE_COMMAND)?;
     Ok(changed)
 }
 
-fn ensure_claude_hook(root: &mut Value, event: &str, command: &str) -> Result<bool> {
+fn ensure_claude_hook(
+    root: &mut Value,
+    event: &str,
+    matcher: Option<&str>,
+    command: &str,
+) -> Result<bool> {
     let root_obj = root
         .as_object_mut()
         .context("claude config root must be a JSON object")?;
     let hooks = object_field(root_obj, "hooks")?;
     let event_entries = array_field(hooks, event)?;
 
-    if claude_event_contains_command(event_entries, command) {
+    if claude_event_contains_command(event_entries, matcher, command) {
         return Ok(false);
     }
 
-    event_entries.push(json!({
+    let mut entry = json!({
         "hooks": [
             {
                 "type": "command",
                 "command": command
             }
         ]
-    }));
+    });
+    if let Some(matcher) = matcher
+        && let Some(entry_obj) = entry.as_object_mut()
+    {
+        entry_obj.insert("matcher".to_string(), Value::String(matcher.to_string()));
+    }
+    event_entries.push(entry);
 
     Ok(true)
 }
 
-fn claude_event_contains_command(entries: &[Value], command: &str) -> bool {
+fn claude_event_contains_command(entries: &[Value], matcher: Option<&str>, command: &str) -> bool {
     entries.iter().any(|entry| {
+        if entry.get("matcher").and_then(Value::as_str) != matcher {
+            return false;
+        }
         entry
             .get("hooks")
             .and_then(Value::as_array)
@@ -737,6 +761,8 @@ fn ensure_kiro_hooks(root: &mut Value) -> Result<bool> {
 
     let hooks = object_field(root_obj, "hooks")?;
     changed |= ensure_kiro_hook_event(hooks, "userPromptSubmit", KIRO_WORKING_COMMAND)?;
+    changed |= ensure_kiro_hook_event(hooks, "preToolUse", KIRO_BLOCKED_COMMAND)?;
+    changed |= ensure_kiro_hook_event(hooks, "postToolUse", KIRO_WORKING_COMMAND)?;
     changed |= ensure_kiro_hook_event(hooks, "stop", KIRO_IDLE_COMMAND)?;
 
     Ok(changed)
@@ -773,6 +799,10 @@ fn ensure_cursor_hooks(root: &mut Value) -> Result<bool> {
 
     let hooks = object_field(root_obj, "hooks")?;
     changed |= ensure_cursor_hook_event(hooks, "beforeSubmitPrompt", CURSOR_WORKING_COMMAND)?;
+    changed |= ensure_cursor_hook_event(hooks, "beforeShellExecution", CURSOR_BLOCKED_COMMAND)?;
+    changed |= ensure_cursor_hook_event(hooks, "afterShellExecution", CURSOR_WORKING_COMMAND)?;
+    changed |= ensure_cursor_hook_event(hooks, "beforeMCPExecution", CURSOR_BLOCKED_COMMAND)?;
+    changed |= ensure_cursor_hook_event(hooks, "afterMCPExecution", CURSOR_WORKING_COMMAND)?;
     changed |= ensure_cursor_hook_event(hooks, "stop", CURSOR_IDLE_COMMAND)?;
     Ok(changed)
 }
@@ -986,6 +1016,20 @@ mod tests {
             .and_then(Value::as_array)
             .expect("submit array");
         assert_eq!(submit.len(), 1);
+        let permission_request = hooks
+            .get("PermissionRequest")
+            .and_then(Value::as_array)
+            .expect("permission request array");
+        assert_eq!(permission_request.len(), 1);
+        let notification = hooks
+            .get("Notification")
+            .and_then(Value::as_array)
+            .expect("notification array");
+        assert_eq!(notification.len(), 1);
+        assert_eq!(
+            notification[0].get("matcher").and_then(Value::as_str),
+            Some("permission_prompt|idle_prompt|elicitation_dialog")
+        );
     }
 
     #[test]
@@ -1007,6 +1051,15 @@ mod tests {
             .and_then(Value::as_array)
             .expect("stop array");
         assert_eq!(stop.len(), 1);
+        let pre_tool = hooks
+            .get("preToolUse")
+            .and_then(Value::as_array)
+            .expect("preToolUse array");
+        assert_eq!(pre_tool.len(), 1);
+        assert_eq!(
+            pre_tool[0].get("command").and_then(Value::as_str),
+            Some(KIRO_BLOCKED_COMMAND)
+        );
     }
 
     #[test]
@@ -1034,6 +1087,15 @@ mod tests {
             .and_then(Value::as_array)
             .expect("beforeSubmitPrompt array");
         assert_eq!(submit.len(), 1);
+        let before_shell = hooks
+            .get("beforeShellExecution")
+            .and_then(Value::as_array)
+            .expect("beforeShellExecution array");
+        assert_eq!(before_shell.len(), 1);
+        assert_eq!(
+            before_shell[0].get("command").and_then(Value::as_str),
+            Some(CURSOR_BLOCKED_COMMAND)
+        );
     }
 
     #[test]
@@ -1122,6 +1184,9 @@ mod tests {
             .expect("render hooks");
         assert!(rendered.contains("UserPromptSubmit"));
         assert!(rendered.contains("--status working"));
+        assert!(rendered.contains("PermissionRequest"));
+        assert!(rendered.contains("permission_prompt|idle_prompt|elicitation_dialog"));
+        assert!(rendered.contains("--status blocked"));
         assert!(rendered.contains("--status idle"));
         assert!(rendered.contains(".claude/settings.local.json"));
         assert!(rendered.contains("~/.claude/settings.json"));
