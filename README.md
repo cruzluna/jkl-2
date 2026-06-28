@@ -438,8 +438,8 @@ jkl sync
 
 Status values:
 
-- `working` (blue)
 - `idle` (yellow)
+- `working` (blue)
 - `blocked` (red)
 - `unknown` (gray)
 - missing values render as `-`
