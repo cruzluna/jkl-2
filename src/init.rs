@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const CLAUDE_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
-const CLAUDE_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
+const CLAUDE_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle";
 const KIRO_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
-const KIRO_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
+const KIRO_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle";
 const CURSOR_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
-const CURSOR_WAITING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
+const CURSOR_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle";
 
 const KIRO_NAME: &str = "jkl";
 const KIRO_DESCRIPTION: &str = "Sync jkl status with Kiro activity";
@@ -37,7 +37,7 @@ const AGENTS_MD_APPEND_LINES: [&str; 10] = [
     "  - Pane id: `$(tmux display-message -p '#{pane_id}')`",
     "- Pane example: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working`",
     "- Pane context example: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --context \"triage auth bug\"`",
-    "- Session example: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --status waiting --context \"need review\"`",
+    "- Session example: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --status idle --context \"need review\"`",
     "- If you update session or pane context, keep it under 10 words.",
 ];
 const ALL_PROMPT_TOOLS: [InitTool; 4] = [
@@ -676,7 +676,7 @@ fn write_json_pretty(path: &Path, value: &Value) -> Result<()> {
 fn ensure_claude_hooks(root: &mut Value) -> Result<bool> {
     let mut changed = false;
     changed |= ensure_claude_hook(root, "UserPromptSubmit", CLAUDE_WORKING_COMMAND)?;
-    changed |= ensure_claude_hook(root, "Stop", CLAUDE_WAITING_COMMAND)?;
+    changed |= ensure_claude_hook(root, "Stop", CLAUDE_IDLE_COMMAND)?;
     Ok(changed)
 }
 
@@ -737,7 +737,7 @@ fn ensure_kiro_hooks(root: &mut Value) -> Result<bool> {
 
     let hooks = object_field(root_obj, "hooks")?;
     changed |= ensure_kiro_hook_event(hooks, "userPromptSubmit", KIRO_WORKING_COMMAND)?;
-    changed |= ensure_kiro_hook_event(hooks, "stop", KIRO_WAITING_COMMAND)?;
+    changed |= ensure_kiro_hook_event(hooks, "stop", KIRO_IDLE_COMMAND)?;
 
     Ok(changed)
 }
@@ -773,7 +773,7 @@ fn ensure_cursor_hooks(root: &mut Value) -> Result<bool> {
 
     let hooks = object_field(root_obj, "hooks")?;
     changed |= ensure_cursor_hook_event(hooks, "beforeSubmitPrompt", CURSOR_WORKING_COMMAND)?;
-    changed |= ensure_cursor_hook_event(hooks, "stop", CURSOR_WAITING_COMMAND)?;
+    changed |= ensure_cursor_hook_event(hooks, "stop", CURSOR_IDLE_COMMAND)?;
     Ok(changed)
 }
 
@@ -1122,7 +1122,7 @@ mod tests {
             .expect("render hooks");
         assert!(rendered.contains("UserPromptSubmit"));
         assert!(rendered.contains("--status working"));
-        assert!(rendered.contains("--status waiting"));
+        assert!(rendered.contains("--status idle"));
         assert!(rendered.contains(".claude/settings.local.json"));
         assert!(rendered.contains("~/.claude/settings.json"));
     }

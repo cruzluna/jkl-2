@@ -1,8 +1,8 @@
 const statusSuggestions: Fig.Suggestion[] = [
+  { name: "idle", description: "Agent is idle or ready for review" },
   { name: "working", description: "Agent is actively working" },
-  { name: "waiting", description: "Agent is waiting for human input" },
-  { name: "done", description: "Agent has completed the task" },
-  { name: "none", description: "Clear status / no explicit status" },
+  { name: "blocked", description: "Agent is waiting for human input" },
+  { name: "unknown", description: "Agent status is unknown" },
 ];
 
 const initToolHooksSuggestions: Fig.Suggestion[] = [

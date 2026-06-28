@@ -174,7 +174,7 @@ fi
 printf "\n"
 
 WORKING_HOOK_COMMAND='[ -n "$TMUX" ] || exit 0; jkl upsert "$(tmux display-message -p '"'"'#S'"'"')" --session-id "$(tmux display-message -p '"'"'#{session_id}'"'"')" --pane-id "$(tmux display-message -p '"'"'#{pane_id}'"'"')" --status working'
-WAITING_HOOK_COMMAND='[ -n "$TMUX" ] || exit 0; jkl upsert "$(tmux display-message -p '"'"'#S'"'"')" --session-id "$(tmux display-message -p '"'"'#{session_id}'"'"')" --pane-id "$(tmux display-message -p '"'"'#{pane_id}'"'"')" --status waiting'
+IDLE_HOOK_COMMAND='[ -n "$TMUX" ] || exit 0; jkl upsert "$(tmux display-message -p '"'"'#S'"'"')" --session-id "$(tmux display-message -p '"'"'#{session_id}'"'"')" --pane-id "$(tmux display-message -p '"'"'#{pane_id}'"'"')" --status idle'
 
 RULE_LINE="──────────────────────────────────────────────────────────────"
 print_message muted "$RULE_LINE"
@@ -189,19 +189,19 @@ print_message muted "  jkl init fig-autocomplete"
 printf "\n"
 
 print_message accent "▸ Claude Code hooks"
-print_message muted "  Paste into Claude Code so the current pane is \"working\" while you prompt and \"waiting\" when Claude stops."
+print_message muted "  Paste into Claude Code so the current pane is \"working\" while you prompt and \"idle\" when Claude stops."
 print_message muted "  UserPromptSubmit:"
 print_message info "      $WORKING_HOOK_COMMAND"
 print_message muted "  Stop:"
-print_message info "      $WAITING_HOOK_COMMAND"
+print_message info "      $IDLE_HOOK_COMMAND"
 printf "\n"
 
 print_message accent "▸ Kiro CLI hooks"
-print_message muted "  Paste into Kiro CLI for the same working / waiting behavior."
+print_message muted "  Paste into Kiro CLI for the same working / idle behavior."
 print_message muted "  userPromptSubmit:"
 print_message info "      $WORKING_HOOK_COMMAND"
 print_message muted "  stop:"
-print_message info "      $WAITING_HOOK_COMMAND"
+print_message info "      $IDLE_HOOK_COMMAND"
 printf "\n"
 
 print_message accent "▸ tmux + TPM"

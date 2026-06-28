@@ -14,14 +14,18 @@ use thiserror::Error;
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum AgentStatus {
-    // When the Agent is working
+    // When the agent is waiting for new work or review.
+    #[serde(alias = "waiting", alias = "done")]
+    #[strum(to_string = "idle", serialize = "waiting", serialize = "done")]
+    Idle,
+    // When the agent is actively working.
     Working,
-    // When the Agent is waiting for human intervention
-    Waiting,
-    // When the Agent is complete with its work
-    Done,
-    // When there is no status assigned to an Agent or the Agent DNE yet
-    None,
+    // When the agent needs human input or permission to proceed.
+    Blocked,
+    // When the agent status is explicitly unknown.
+    #[serde(alias = "none")]
+    #[strum(to_string = "unknown", serialize = "none")]
+    Unknown,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -104,35 +108,34 @@ where
         return override_status;
     }
 
-    let mut working = 0usize;
-    let mut waiting = 0usize;
-    let mut done = 0usize;
+    let mut blocked = false;
+    let mut working = false;
+    let mut idle = false;
+    let mut unknown = false;
 
     for status in pane_statuses {
         let Some(status) = status else {
             continue;
         };
         match status {
-            AgentStatus::None => {}
-            AgentStatus::Working => working += 1,
-            // "idle" maps to Waiting in AgentStatus terms.
-            AgentStatus::Waiting => waiting += 1,
-            AgentStatus::Done => done += 1,
+            AgentStatus::Blocked => blocked = true,
+            AgentStatus::Working => working = true,
+            AgentStatus::Idle => idle = true,
+            AgentStatus::Unknown => unknown = true,
         }
     }
 
-    if working == 0 && waiting == 0 && done == 0 {
-        return None;
+    if blocked {
+        return Some(AgentStatus::Blocked);
     }
-
-    if working > 0 {
+    if working {
         return Some(AgentStatus::Working);
     }
-    if waiting > 0 {
-        return Some(AgentStatus::Waiting);
+    if idle {
+        return Some(AgentStatus::Idle);
     }
-    if done > 0 {
-        return Some(AgentStatus::Done);
+    if unknown {
+        return Some(AgentStatus::Unknown);
     }
 
     None
@@ -580,29 +583,57 @@ mod tests {
     }
 
     #[test]
-    fn effective_session_status_prioritizes_non_done_pane_states() {
+    fn effective_session_status_prioritizes_blocked_then_working_then_idle() {
         let status = effective_session_status(
             None,
-            vec![Some(AgentStatus::Done), Some(AgentStatus::Waiting)],
+            vec![Some(AgentStatus::Unknown), Some(AgentStatus::Idle)],
         );
-        assert_eq!(status, Some(AgentStatus::Waiting));
+        assert_eq!(status, Some(AgentStatus::Idle));
 
         let status = effective_session_status(
             None,
             vec![
-                Some(AgentStatus::Done),
-                Some(AgentStatus::Waiting),
+                Some(AgentStatus::Unknown),
+                Some(AgentStatus::Idle),
                 Some(AgentStatus::Working),
             ],
         );
         assert_eq!(status, Some(AgentStatus::Working));
+
+        let status = effective_session_status(
+            None,
+            vec![
+                Some(AgentStatus::Working),
+                Some(AgentStatus::Blocked),
+                Some(AgentStatus::Idle),
+            ],
+        );
+        assert_eq!(status, Some(AgentStatus::Blocked));
     }
 
     #[test]
-    fn effective_session_status_is_done_only_when_all_known_panes_are_done() {
-        let status =
-            effective_session_status(None, vec![Some(AgentStatus::Done), Some(AgentStatus::Done)]);
-        assert_eq!(status, Some(AgentStatus::Done));
+    fn effective_session_status_uses_unknown_when_only_unknown_is_reported() {
+        let status = effective_session_status(None, vec![Some(AgentStatus::Unknown), None]);
+        assert_eq!(status, Some(AgentStatus::Unknown));
+    }
+
+    #[test]
+    fn agent_status_reads_legacy_values_as_new_statuses() {
+        assert_eq!("waiting".parse::<AgentStatus>(), Ok(AgentStatus::Idle));
+        assert_eq!("done".parse::<AgentStatus>(), Ok(AgentStatus::Idle));
+        assert_eq!("none".parse::<AgentStatus>(), Ok(AgentStatus::Unknown));
+
+        let idle: AgentStatus = serde_json::from_str("\"waiting\"").expect("legacy waiting");
+        let done: AgentStatus = serde_json::from_str("\"done\"").expect("legacy done");
+        let unknown: AgentStatus = serde_json::from_str("\"none\"").expect("legacy none");
+
+        assert_eq!(idle, AgentStatus::Idle);
+        assert_eq!(done, AgentStatus::Idle);
+        assert_eq!(unknown, AgentStatus::Unknown);
+        assert_eq!(
+            serde_json::to_string(&AgentStatus::Idle).expect("serialize idle"),
+            "\"idle\""
+        );
     }
 
     #[test]
@@ -650,7 +681,7 @@ mod tests {
             None,
             None,
             Some("pane".to_string()),
-            Some(AgentStatus::Waiting),
+            Some(AgentStatus::Idle),
             Some("ctx".to_string()),
         )
         .expect("upsert pane");
@@ -659,7 +690,7 @@ mod tests {
         let session = contexts.get(&session_key("Alpha")).expect("session entry");
         let pane = session.panes.get("%1").expect("pane entry");
         assert_eq!(pane.pane_name.as_deref(), Some("pane"));
-        assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
+        assert_eq!(pane.pane_status, Some(AgentStatus::Idle));
         assert_eq!(pane.pane_context.as_deref(), Some("ctx"));
     }
 

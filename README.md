@@ -233,7 +233,7 @@ set -g @jkl_force_bind_keys 'on'
 
 ### Claude Code hooks
 
-Claude Code hooks can be configured in `~/.claude/settings.json` (user), `.claude/settings.json` (project), or `.claude/settings.local.json` (local project). The example below marks the current tmux pane as `working` when you submit a prompt, and `waiting` when Claude stops.
+Claude Code hooks can be configured in `~/.claude/settings.json` (user), `.claude/settings.json` (project), or `.claude/settings.local.json` (local project). The example below marks the current tmux pane as `working` when you submit a prompt, and `idle` when Claude stops.
 
 Initialize automatically:
 
@@ -259,7 +259,7 @@ jkl init hooks --tool claude --scope global --non-interactive
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting"
+            "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle"
           }
         ]
       }
@@ -314,7 +314,7 @@ Kiro hooks targeting behavior:
     ],
     "stop": [
       {
-        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting"
+        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle"
       }
     ]
   }
@@ -332,7 +332,7 @@ Docs:
 
 Cursor hooks are configured in `hooks.json` at either the user level (`~/.cursor/hooks.json`) or the project level (`<project>/.cursor/hooks.json`).
 
-The example below uses Agent hooks to mirror the Kiro behavior: set the current tmux pane to `working` on `beforeSubmitPrompt`, then back to `waiting` on `stop`.
+The example below uses Agent hooks to mirror the Kiro behavior: set the current tmux pane to `working` on `beforeSubmitPrompt`, then back to `idle` on `stop`.
 
 Initialize automatically:
 
@@ -362,7 +362,7 @@ Cursor hooks targeting behavior:
     ],
     "stop": [
       {
-        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting"
+        "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle"
       }
     ]
   }
@@ -401,7 +401,7 @@ Shape (keyed by `blake3(session_name)`):
 {
   "2f0d7b3b5e3b9b1d4b4b5b8b8e2e2e9a2d2d4d5f2f0f5e5f2d9b3f1a5c8e": {
     "session_name": "work",
-    "session_status": "waiting",
+    "session_status": "idle",
     "session_context": "my project",
     "windows": {
       "@10": {
@@ -439,8 +439,9 @@ jkl sync
 Status values:
 
 - `working` (blue)
-- `waiting` or `idle` (yellow)
-- `done` (green)
+- `idle` (yellow)
+- `blocked` (red)
+- `unknown` (gray)
 - missing values render as `-`
 
 ## Testing

@@ -8,7 +8,7 @@ const REPO_OWNER: &str = "cruzluna";
 const REPO_NAME: &str = "jkl-2";
 const BIN_NAME: &str = "jkl";
 const WORKING_HOOK_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
-const WAITING_HOOK_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status waiting";
+const IDLE_HOOK_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateChannel {
@@ -250,20 +250,20 @@ fn print_post_update_notes() {
 
     println!("{accent}▸{reset} {bold}Claude Code hooks{reset}");
     println!(
-        "    {dim}Paste into Claude Code so the current pane is \"working\" while you prompt and \"waiting\" when Claude stops.{reset}"
+        "    {dim}Paste into Claude Code so the current pane is \"working\" while you prompt and \"idle\" when Claude stops.{reset}"
     );
     println!("    {dim}UserPromptSubmit:{reset}");
     println!("        {WORKING_HOOK_COMMAND}");
     println!("    {dim}Stop:{reset}");
-    println!("        {WAITING_HOOK_COMMAND}");
+    println!("        {IDLE_HOOK_COMMAND}");
     println!();
 
     println!("{accent}▸{reset} {bold}Kiro CLI hooks{reset}");
-    println!("    {dim}Paste into Kiro CLI for the same working / waiting behavior.{reset}");
+    println!("    {dim}Paste into Kiro CLI for the same working / idle behavior.{reset}");
     println!("    {dim}userPromptSubmit:{reset}");
     println!("        {WORKING_HOOK_COMMAND}");
     println!("    {dim}stop:{reset}");
-    println!("        {WAITING_HOOK_COMMAND}");
+    println!("        {IDLE_HOOK_COMMAND}");
     println!();
 
     println!("{accent}▸{reset} {bold}tmux + TPM{reset}");

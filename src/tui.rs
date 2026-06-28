@@ -1151,16 +1151,19 @@ impl PaneSelector {
 
 fn pane_status_options() -> Vec<(String, Option<crate::context::AgentStatus>)> {
     vec![
+        ("idle".to_string(), Some(crate::context::AgentStatus::Idle)),
         (
             "working".to_string(),
             Some(crate::context::AgentStatus::Working),
         ),
         (
-            "waiting".to_string(),
-            Some(crate::context::AgentStatus::Waiting),
+            "blocked".to_string(),
+            Some(crate::context::AgentStatus::Blocked),
         ),
-        ("done".to_string(), Some(crate::context::AgentStatus::Done)),
-        ("none".to_string(), Some(crate::context::AgentStatus::None)),
+        (
+            "unknown".to_string(),
+            Some(crate::context::AgentStatus::Unknown),
+        ),
     ]
 }
 
@@ -1442,10 +1445,10 @@ fn status_text(status: Option<&crate::context::AgentStatus>) -> String {
 
 fn status_style(status: Option<&crate::context::AgentStatus>) -> Style {
     match status {
-        Some(crate::context::AgentStatus::Done) => Style::default().fg(Color::Green),
-        Some(crate::context::AgentStatus::None) => Style::default().fg(Color::Gray),
+        Some(crate::context::AgentStatus::Idle) => Style::default().fg(Color::Yellow),
         Some(crate::context::AgentStatus::Working) => Style::default().fg(Color::Blue),
-        Some(crate::context::AgentStatus::Waiting) => Style::default().fg(Color::Yellow),
+        Some(crate::context::AgentStatus::Blocked) => Style::default().fg(Color::Red),
+        Some(crate::context::AgentStatus::Unknown) => Style::default().fg(Color::Gray),
         None => Style::default(),
     }
 }
@@ -1614,7 +1617,7 @@ esac
 
     #[test]
     fn status_text_uses_default_for_missing() {
-        assert_eq!(status_text(Some(&AgentStatus::Done)), "done");
+        assert_eq!(status_text(Some(&AgentStatus::Idle)), "idle");
         assert_eq!(status_text(None), DATA_NOT_RECEIVED);
     }
 
@@ -1667,7 +1670,7 @@ esac
                 window_id: Some("@10".to_string()),
                 window_name: Some("editor".to_string()),
                 pane_name: Some("pane-two".to_string()),
-                pane_status: Some(AgentStatus::Done),
+                pane_status: Some(AgentStatus::Blocked),
                 pane_context: Some("pctx".to_string()),
             },
         );
@@ -1722,7 +1725,7 @@ esac
         assert_eq!(alpha.windows[0].panes[0].context, DATA_NOT_RECEIVED);
         assert_eq!(alpha.windows[0].panes[1].id, "%2");
         assert_eq!(alpha.windows[0].panes[1].alias.as_deref(), Some("pane-two"));
-        assert_eq!(alpha.windows[0].panes[1].status, Some(AgentStatus::Done));
+        assert_eq!(alpha.windows[0].panes[1].status, Some(AgentStatus::Blocked));
         assert_eq!(alpha.windows[0].panes[1].context, "pctx");
     }
 
@@ -1797,7 +1800,7 @@ esac
                         id: "%1".to_string(),
                         window_id: "@10".to_string(),
                         alias: Some("deploy-pane".to_string()),
-                        status: Some(AgentStatus::Waiting),
+                        status: Some(AgentStatus::Idle),
                         context: "pctx".to_string(),
                         session_id: "@1".to_string(),
                     }],
@@ -1806,7 +1809,7 @@ esac
                 WindowRow {
                     id: "@11".to_string(),
                     name: "server".to_string(),
-                    status: Some(AgentStatus::Done),
+                    status: Some(AgentStatus::Blocked),
                     context: "ops".to_string(),
                     panes: vec![PaneRow {
                         id: "%2".to_string(),
