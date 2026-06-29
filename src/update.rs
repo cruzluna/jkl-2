@@ -257,6 +257,8 @@ fn print_post_update_notes() {
     println!("        {WORKING_HOOK_COMMAND}");
     println!("    {dim}PermissionRequest / Notification permission prompts:{reset}");
     println!("        {BLOCKED_HOOK_COMMAND}");
+    println!("    {dim}Notification idle prompts:{reset}");
+    println!("        {IDLE_HOOK_COMMAND}");
     println!("    {dim}Stop:{reset}");
     println!("        {IDLE_HOOK_COMMAND}");
     println!();

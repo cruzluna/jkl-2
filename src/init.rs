@@ -683,8 +683,14 @@ fn ensure_claude_hooks(root: &mut Value) -> Result<bool> {
     changed |= ensure_claude_hook(
         root,
         "Notification",
-        Some("permission_prompt|idle_prompt|elicitation_dialog"),
+        Some("permission_prompt|elicitation_dialog"),
         CLAUDE_BLOCKED_COMMAND,
+    )?;
+    changed |= ensure_claude_hook(
+        root,
+        "Notification",
+        Some("idle_prompt"),
+        CLAUDE_IDLE_COMMAND,
     )?;
     changed |= ensure_claude_hook(root, "Stop", None, CLAUDE_IDLE_COMMAND)?;
     Ok(changed)
@@ -1025,10 +1031,14 @@ mod tests {
             .get("Notification")
             .and_then(Value::as_array)
             .expect("notification array");
-        assert_eq!(notification.len(), 1);
+        assert_eq!(notification.len(), 2);
         assert_eq!(
             notification[0].get("matcher").and_then(Value::as_str),
-            Some("permission_prompt|idle_prompt|elicitation_dialog")
+            Some("permission_prompt|elicitation_dialog")
+        );
+        assert_eq!(
+            notification[1].get("matcher").and_then(Value::as_str),
+            Some("idle_prompt")
         );
     }
 
@@ -1185,7 +1195,8 @@ mod tests {
         assert!(rendered.contains("UserPromptSubmit"));
         assert!(rendered.contains("--status working"));
         assert!(rendered.contains("PermissionRequest"));
-        assert!(rendered.contains("permission_prompt|idle_prompt|elicitation_dialog"));
+        assert!(rendered.contains("permission_prompt|elicitation_dialog"));
+        assert!(rendered.contains("idle_prompt"));
         assert!(rendered.contains("--status blocked"));
         assert!(rendered.contains("--status idle"));
         assert!(rendered.contains(".claude/settings.local.json"));
