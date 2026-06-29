@@ -33,7 +33,7 @@ Examples:
   jkl upsert \"$(tmux display-message -p '#S')\" \\
     --session-id \"$(tmux display-message -p '#{session_id}')\" \\
     --pane-id \"$(tmux display-message -p '#{pane_id}')\" \\
-    --status waiting
+    --status idle
 
   # Pane labels + short context
   jkl upsert \"$(tmux display-message -p '#S')\" \\
@@ -100,7 +100,7 @@ struct UpsertArgs {
     /// Human-readable pane label (set once, then reuse).
     #[arg(long)]
     pane_name: Option<String>,
-    /// One of: working, waiting, done, none.
+    /// One of: idle, working, blocked, unknown.
     #[arg(long)]
     status: Option<String>,
     /// Short context note (prefer a few words).
@@ -343,7 +343,7 @@ fn join_tokens(tokens: Vec<String>) -> String {
 }
 
 fn valid_statuses() -> Vec<&'static str> {
-    vec!["working", "waiting", "done", "none"]
+    vec!["idle", "working", "blocked", "unknown"]
 }
 
 #[cfg(test)]
@@ -383,7 +383,7 @@ mod tests {
             ContextError::InvalidStatus(message) => {
                 assert_eq!(
                     message,
-                    "not-a-status. Valid options: working, waiting, done, none"
+                    "not-a-status. Valid options: idle, working, blocked, unknown"
                 );
             }
             other => panic!("unexpected error: {other:?}"),
@@ -470,7 +470,7 @@ mod tests {
             window_id: Some("@1".to_string()),
             pane_name: Some("planner".to_string()),
             window_name: Some("editor".to_string()),
-            status: Some("waiting".to_string()),
+            status: Some("idle".to_string()),
             context: Some(vec!["pane".to_string(), "ctx".to_string()]),
         };
 
@@ -482,7 +482,7 @@ mod tests {
         assert_eq!(pane.window_id.as_deref(), Some("@1"));
         assert_eq!(pane.window_name.as_deref(), Some("editor"));
         assert_eq!(pane.pane_name.as_deref(), Some("planner"));
-        assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
+        assert_eq!(pane.pane_status, Some(AgentStatus::Idle));
         assert_eq!(pane.pane_context.as_deref(), Some("pane ctx"));
     }
 
@@ -498,7 +498,7 @@ mod tests {
             window_id: None,
             window_name: Some("editor".to_string()),
             pane_name: None,
-            status: Some("waiting".to_string()),
+            status: Some("idle".to_string()),
             context: None,
         };
 
@@ -519,7 +519,7 @@ mod tests {
         crate::context::upsert_session(
             "Alpha".to_string(),
             Some("@1".to_string()),
-            Some(AgentStatus::Done),
+            Some(AgentStatus::Unknown),
             Some("keep session ctx".to_string()),
         )
         .expect("seed session");
@@ -541,7 +541,7 @@ mod tests {
             window_id: None,
             window_name: None,
             pane_name: None,
-            status: Some("waiting".to_string()),
+            status: Some("blocked".to_string()),
             context: None,
         };
         handle_upsert(args).expect("upsert pane status");
@@ -549,10 +549,10 @@ mod tests {
         let contexts = load_contexts().expect("load contexts");
         let session = contexts.get(&session_key("Alpha")).expect("session exists");
         assert_eq!(session.session_context.as_deref(), Some("keep session ctx"));
-        assert_eq!(session.session_status, Some(AgentStatus::Done));
+        assert_eq!(session.session_status, Some(AgentStatus::Unknown));
 
         let pane = session.panes.get("%1").expect("pane exists");
-        assert_eq!(pane.pane_status, Some(AgentStatus::Waiting));
+        assert_eq!(pane.pane_status, Some(AgentStatus::Blocked));
         assert_eq!(pane.pane_context.as_deref(), Some("keep pane ctx"));
     }
 

@@ -17,7 +17,7 @@ Use this as the default playbook for coding agents in this repository.
 - Build:`cargo build`
 - Run:
 - `cargo run -- tui`
-- `cargo run -- upsert my session --status working`
+- `cargo run -- upsert my session --status idle`
 - Test all:
 - `cargo test --locked`
 - Test one module:
