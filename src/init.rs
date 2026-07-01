@@ -20,6 +20,9 @@ const CURSOR_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tm
 
 const KIRO_NAME: &str = "jkl";
 const KIRO_DESCRIPTION: &str = "Sync jkl status with Kiro activity";
+const OPENCODE_PLUGIN_PACKAGE: &str = "opencode-jkl";
+const OPENCODE_CONFIG_SCHEMA: &str = "https://opencode.ai/config.json";
+const PI_PACKAGE: &str = "npm:pi-jkl";
 
 const FIG_SPEC: &str = include_str!("../completions/fig/jkl.ts");
 const TMUX_CONF_LINES: [&str; 3] = [
@@ -43,19 +46,30 @@ const AGENTS_MD_APPEND_LINES: [&str; 10] = [
     "- Session example: `jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --status idle --context \"need review\"`",
     "- If you update session or pane context, keep it under 10 words.",
 ];
-const ALL_PROMPT_TOOLS: [InitTool; 4] = [
+const ALL_PROMPT_TOOLS: [InitTool; 6] = [
     InitTool::Claude,
     InitTool::Cursor,
     InitTool::Kiro,
+    InitTool::OpenCode,
+    InitTool::Pi,
     InitTool::Codex,
 ];
-const HOOK_PROMPT_TOOLS: [InitTool; 3] = [InitTool::Claude, InitTool::Cursor, InitTool::Kiro];
+const HOOK_PROMPT_TOOLS: [InitTool; 5] = [
+    InitTool::Claude,
+    InitTool::Cursor,
+    InitTool::Kiro,
+    InitTool::OpenCode,
+    InitTool::Pi,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum InitTool {
     Claude,
     Cursor,
     Kiro,
+    #[value(name = "opencode", alias = "open-code")]
+    OpenCode,
+    Pi,
     Codex,
 }
 
@@ -65,6 +79,8 @@ impl fmt::Display for InitTool {
             Self::Kiro => write!(f, "kiro"),
             Self::Claude => write!(f, "claude"),
             Self::Cursor => write!(f, "cursor"),
+            Self::OpenCode => write!(f, "opencode"),
+            Self::Pi => write!(f, "pi"),
             Self::Codex => write!(f, "codex"),
         }
     }
@@ -150,7 +166,13 @@ pub fn run_hooks(
     let tool = resolve_tool(
         tool,
         non_interactive,
-        &[InitTool::Claude, InitTool::Cursor, InitTool::Kiro],
+        &[
+            InitTool::Claude,
+            InitTool::Cursor,
+            InitTool::Kiro,
+            InitTool::OpenCode,
+            InitTool::Pi,
+        ],
         "Select the tool to initialize hooks for:",
         "--tool is required when using --non-interactive",
     )?;
@@ -182,6 +204,24 @@ pub fn run_hooks(
                 bail!("--agent-config-dir is only supported for --tool kiro");
             }
             let paths = resolve_cursor_hook_paths(scope, config_paths)?;
+            for path in paths {
+                apply_hooks_to_file(&path, tool)?;
+            }
+        }
+        InitTool::OpenCode => {
+            if agents_dir.is_some() {
+                bail!("--agent-config-dir is only supported for --tool kiro");
+            }
+            let paths = resolve_opencode_hook_paths(scope, config_paths)?;
+            for path in paths {
+                apply_hooks_to_file(&path, tool)?;
+            }
+        }
+        InitTool::Pi => {
+            if agents_dir.is_some() {
+                bail!("--agent-config-dir is only supported for --tool kiro");
+            }
+            let paths = resolve_pi_hook_paths(scope, config_paths)?;
             for path in paths {
                 apply_hooks_to_file(&path, tool)?;
             }
@@ -350,6 +390,8 @@ fn prompt_provider_name(tool: InitTool) -> &'static str {
         InitTool::Claude => "Claude Code",
         InitTool::Cursor => "Cursor",
         InitTool::Kiro => "Kiro CLI",
+        InitTool::OpenCode => "OpenCode",
+        InitTool::Pi => "Pi",
         InitTool::Codex => "Codex",
     }
 }
@@ -359,6 +401,8 @@ fn hook_path_hints(tool: InitTool) -> &'static [&'static str] {
         InitTool::Claude => &[".claude/settings.local.json", "~/.claude/settings.json"],
         InitTool::Cursor => &[".cursor/hooks.json", "~/.cursor/hooks.json"],
         InitTool::Kiro => &[".kiro/agents/jkl.json", "~/.kiro/agents/jkl.json"],
+        InitTool::OpenCode => &["opencode.json", "~/.config/opencode/opencode.json"],
+        InitTool::Pi => &[".pi/settings.json", "~/.pi/agent/settings.json"],
         InitTool::Codex => &[],
     }
 }
@@ -374,6 +418,12 @@ fn hook_config_snippet(tool: InitTool) -> Result<String> {
         }
         InitTool::Kiro => {
             ensure_kiro_hooks(&mut root)?;
+        }
+        InitTool::OpenCode => {
+            ensure_opencode_plugin(&mut root)?;
+        }
+        InitTool::Pi => {
+            ensure_pi_package(&mut root)?;
         }
         InitTool::Codex => bail!("codex does not support hooks"),
     }
@@ -430,6 +480,8 @@ fn apply_hooks_to_file(path: &Path, tool: InitTool) -> Result<()> {
         InitTool::Claude => ensure_claude_hooks(&mut root)?,
         InitTool::Cursor => ensure_cursor_hooks(&mut root)?,
         InitTool::Kiro => ensure_kiro_hooks(&mut root)?,
+        InitTool::OpenCode => ensure_opencode_plugin(&mut root)?,
+        InitTool::Pi => ensure_pi_package(&mut root)?,
         InitTool::Codex => bail!("codex does not support hooks"),
     };
 
@@ -460,6 +512,14 @@ fn hooks_config_path(tool: InitTool, scope: InitScope) -> Result<PathBuf> {
             .join(".kiro")
             .join("agents")
             .join("jkl.json"),
+        (InitTool::OpenCode, InitScope::Global) => {
+            home.join(".config").join("opencode").join("opencode.json")
+        }
+        (InitTool::OpenCode, InitScope::Local) => std::env::current_dir()?.join("opencode.json"),
+        (InitTool::Pi, InitScope::Global) => home.join(".pi").join("agent").join("settings.json"),
+        (InitTool::Pi, InitScope::Local) => {
+            std::env::current_dir()?.join(".pi").join("settings.json")
+        }
         (InitTool::Codex, _) => bail!("codex does not support hooks"),
     })
 }
@@ -511,6 +571,28 @@ fn resolve_cursor_hook_paths(
     }
 
     Ok(vec![hooks_config_path(InitTool::Cursor, scope)?])
+}
+
+fn resolve_opencode_hook_paths(
+    scope: InitScope,
+    config_paths: Option<Vec<PathBuf>>,
+) -> Result<Vec<PathBuf>> {
+    if let Some(paths) = config_paths {
+        return normalize_user_paths(paths);
+    }
+
+    Ok(vec![hooks_config_path(InitTool::OpenCode, scope)?])
+}
+
+fn resolve_pi_hook_paths(
+    scope: InitScope,
+    config_paths: Option<Vec<PathBuf>>,
+) -> Result<Vec<PathBuf>> {
+    if let Some(paths) = config_paths {
+        return normalize_user_paths(paths);
+    }
+
+    Ok(vec![hooks_config_path(InitTool::Pi, scope)?])
 }
 
 fn discover_kiro_agent_configs(agents_dir: &Path) -> Result<Vec<PathChoice>> {
@@ -831,6 +913,49 @@ fn ensure_cursor_hook_event(
     Ok(true)
 }
 
+fn ensure_opencode_plugin(root: &mut Value) -> Result<bool> {
+    let root_obj = root
+        .as_object_mut()
+        .context("opencode config root must be a JSON object")?;
+
+    let mut changed = false;
+    if !root_obj.contains_key("$schema") {
+        root_obj.insert(
+            "$schema".to_string(),
+            Value::String(OPENCODE_CONFIG_SCHEMA.to_string()),
+        );
+        changed = true;
+    }
+
+    let plugins = array_field(root_obj, "plugin")?;
+    if plugins
+        .iter()
+        .any(|entry| entry.as_str() == Some(OPENCODE_PLUGIN_PACKAGE))
+    {
+        return Ok(changed);
+    }
+
+    plugins.push(Value::String(OPENCODE_PLUGIN_PACKAGE.to_string()));
+    Ok(true)
+}
+
+fn ensure_pi_package(root: &mut Value) -> Result<bool> {
+    let root_obj = root
+        .as_object_mut()
+        .context("pi settings root must be a JSON object")?;
+
+    let packages = array_field(root_obj, "packages")?;
+    if packages
+        .iter()
+        .any(|entry| entry.as_str() == Some(PI_PACKAGE))
+    {
+        return Ok(false);
+    }
+
+    packages.push(Value::String(PI_PACKAGE.to_string()));
+    Ok(true)
+}
+
 fn object_field<'a>(
     object: &'a mut Map<String, Value>,
     key: &str,
@@ -1004,6 +1129,57 @@ mod tests {
     }
 
     #[test]
+    fn hooks_path_for_opencode_resolves_global_and_local() {
+        let mut env = EnvGuard::new("init-hooks-opencode-paths");
+        let home = env.set_temp_home();
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+        let previous_cwd = std::env::current_dir().expect("current cwd");
+        struct CwdGuard(PathBuf);
+        impl Drop for CwdGuard {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+        let _cwd_guard = CwdGuard(previous_cwd);
+        std::env::set_current_dir(&cwd).expect("set cwd");
+
+        let global = hooks_config_path(InitTool::OpenCode, InitScope::Global).expect("global path");
+        let local = hooks_config_path(InitTool::OpenCode, InitScope::Local).expect("local path");
+
+        assert_eq!(
+            global,
+            home.join(".config").join("opencode").join("opencode.json")
+        );
+        let cwd_resolved = std::env::current_dir().expect("resolved cwd");
+        assert_eq!(local, cwd_resolved.join("opencode.json"));
+    }
+
+    #[test]
+    fn hooks_path_for_pi_resolves_global_and_local() {
+        let mut env = EnvGuard::new("init-hooks-pi-paths");
+        let home = env.set_temp_home();
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+        let previous_cwd = std::env::current_dir().expect("current cwd");
+        struct CwdGuard(PathBuf);
+        impl Drop for CwdGuard {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+        let _cwd_guard = CwdGuard(previous_cwd);
+        std::env::set_current_dir(&cwd).expect("set cwd");
+
+        let global = hooks_config_path(InitTool::Pi, InitScope::Global).expect("global path");
+        let local = hooks_config_path(InitTool::Pi, InitScope::Local).expect("local path");
+
+        assert_eq!(global, home.join(".pi").join("agent").join("settings.json"));
+        let cwd_resolved = std::env::current_dir().expect("resolved cwd");
+        assert_eq!(local, cwd_resolved.join(".pi").join("settings.json"));
+    }
+
+    #[test]
     fn ensure_claude_hooks_is_idempotent() {
         let mut root = json!({});
 
@@ -1109,6 +1285,46 @@ mod tests {
     }
 
     #[test]
+    fn ensure_opencode_plugin_is_idempotent() {
+        let mut root = json!({});
+
+        let first = ensure_opencode_plugin(&mut root).expect("first ensure");
+        let second = ensure_opencode_plugin(&mut root).expect("second ensure");
+
+        assert!(first);
+        assert!(!second);
+
+        let schema = root.get("$schema").and_then(Value::as_str).expect("schema");
+        assert_eq!(schema, OPENCODE_CONFIG_SCHEMA);
+
+        let plugins = root
+            .get("plugin")
+            .and_then(Value::as_array)
+            .expect("plugin array");
+        assert_eq!(
+            plugins,
+            &[Value::String(OPENCODE_PLUGIN_PACKAGE.to_string())]
+        );
+    }
+
+    #[test]
+    fn ensure_pi_package_is_idempotent() {
+        let mut root = json!({});
+
+        let first = ensure_pi_package(&mut root).expect("first ensure");
+        let second = ensure_pi_package(&mut root).expect("second ensure");
+
+        assert!(first);
+        assert!(!second);
+
+        let packages = root
+            .get("packages")
+            .and_then(Value::as_array)
+            .expect("packages array");
+        assert_eq!(packages, &[Value::String(PI_PACKAGE.to_string())]);
+    }
+
+    #[test]
     fn write_file_if_changed_skips_unchanged() {
         let env = EnvGuard::new("init-write-file-if-changed");
         let path = env.temp_dir().join("file.txt");
@@ -1174,6 +1390,30 @@ mod tests {
     }
 
     #[test]
+    fn resolve_opencode_hook_paths_uses_explicit_paths() {
+        let env = EnvGuard::new("init-opencode-path-override");
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+        let explicit = cwd.join("team-opencode.json");
+
+        let resolved = resolve_opencode_hook_paths(InitScope::Local, Some(vec![explicit.clone()]))
+            .expect("resolve opencode paths");
+        assert_eq!(resolved, vec![explicit]);
+    }
+
+    #[test]
+    fn resolve_pi_hook_paths_uses_explicit_paths() {
+        let env = EnvGuard::new("init-pi-path-override");
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+        let explicit = cwd.join(".pi").join("team-settings.json");
+
+        let resolved = resolve_pi_hook_paths(InitScope::Local, Some(vec![explicit.clone()]))
+            .expect("resolve pi paths");
+        assert_eq!(resolved, vec![explicit]);
+    }
+
+    #[test]
     fn render_prompts_returns_note_for_unsupported_explicit_combo() {
         let rendered = render_prompts(Some(InitTool::Codex), Some(InitPromptOption::Hooks))
             .expect("render prompts");
@@ -1201,6 +1441,26 @@ mod tests {
         assert!(rendered.contains("--status idle"));
         assert!(rendered.contains(".claude/settings.local.json"));
         assert!(rendered.contains("~/.claude/settings.json"));
+    }
+
+    #[test]
+    fn render_hooks_prompt_includes_opencode_npm_package() {
+        let rendered = render_prompts(Some(InitTool::OpenCode), Some(InitPromptOption::Hooks))
+            .expect("render hooks");
+        assert!(rendered.contains("OpenCode"));
+        assert!(rendered.contains("opencode.json"));
+        assert!(rendered.contains("~/.config/opencode/opencode.json"));
+        assert!(rendered.contains(OPENCODE_PLUGIN_PACKAGE));
+    }
+
+    #[test]
+    fn render_hooks_prompt_includes_pi_npm_package() {
+        let rendered = render_prompts(Some(InitTool::Pi), Some(InitPromptOption::Hooks))
+            .expect("render hooks");
+        assert!(rendered.contains("Pi"));
+        assert!(rendered.contains(".pi/settings.json"));
+        assert!(rendered.contains("~/.pi/agent/settings.json"));
+        assert!(rendered.contains(PI_PACKAGE));
     }
 
     #[test]

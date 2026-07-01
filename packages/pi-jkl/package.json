@@ -1,0 +1,47 @@
+{
+  "name": "pi-jkl",
+  "version": "0.1.0",
+  "description": "Pi extension that syncs jkl pane status from agent lifecycle events.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": "./index.ts",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "pack:dry-run": "npm pack --dry-run",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "jkl",
+    "tmux"
+  ],
+  "author": "cruzluna",
+  "license": "MIT",
+  "homepage": "https://github.com/cruzluna/jkl-2#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cruzluna/jkl-2.git",
+    "directory": "packages/pi-jkl"
+  },
+  "bugs": {
+    "url": "https://github.com/cruzluna/jkl-2/issues"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "@types/node": "^25.7.0",
+    "typescript": "^6.0.3"
+  }
+}
