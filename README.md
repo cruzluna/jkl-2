@@ -39,7 +39,7 @@ The installer adds:
 
 - `jkl`
 
-After install, the script prints copy/paste prompts for Claude Code hooks, Kiro CLI hooks, and the `~/.tmux.conf` lines needed for the `jkl-2` TPM plugin. Reprint them later with `jkl init prompts`.
+After install, the script prints copy/paste prompts for Claude Code hooks, Codex hooks, Kiro CLI hooks, and the `~/.tmux.conf` lines needed for the `jkl-2` TPM plugin. Reprint them later with `jkl init prompts`.
 
 ### Release Asset (manual)
 
@@ -75,7 +75,7 @@ If needed, ensure `~/.cargo/bin` is on your `PATH`.
 > 💡 paste something like this into your agent session:
 
    ```bash
-   claude "Help me set up my tmux.conf and Claude Code hooks with the jkl CLI/TUI. Run jkl init prompts"
+   claude "Help me set up my tmux.conf and agent hooks with the jkl CLI/TUI. Run jkl init prompts"
    ```
 
     See [Integrations](#integrations) for more.
@@ -122,7 +122,7 @@ Then refresh Fig autocomplete:
 jkl init fig-autocomplete
 ```
 
-`jkl update` also prints the same Claude Code/Kiro hook prompts and the `~/.tmux.conf` prompt after the update finishes. Use `jkl init prompts` to print them again on demand.
+`jkl update` also prints the same Claude Code/Codex/Kiro hook prompts and the `~/.tmux.conf` prompt after the update finishes. Use `jkl init prompts` to print them again on demand.
 
 ## Uninstall
 
@@ -302,6 +302,75 @@ Docs:
 
 - https://code.claude.com/docs/en/hooks-guide
 - https://code.claude.com/docs/en/hooks
+
+### Codex hooks
+
+Codex hooks can be configured in `~/.codex/hooks.json` (user) or `.codex/hooks.json` (project). The example below marks the current tmux pane as `working` when you submit a prompt or after tool use, `blocked` while Codex waits on permission, and `idle` when Codex stops.
+
+Initialize automatically:
+
+```
+jkl init hooks --tool codex --scope global --non-interactive
+```
+
+To target specific Codex hook config files:
+
+```
+jkl init hooks --tool codex --scope local --non-interactive --agent-config .codex/hooks.json ./custom/codex/hooks.json
+```
+
+After adding or changing non-managed command hooks, open `/hooks` in Codex to review and trust them.
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status blocked"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Docs:
+
+- https://developers.openai.com/codex/hooks
 
 ### Kiro CLI hooks
 

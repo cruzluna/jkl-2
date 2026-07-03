@@ -275,6 +275,16 @@ fn print_post_update_notes() {
     println!("        {IDLE_HOOK_COMMAND}");
     println!();
 
+    println!("{accent}▸{reset} {bold}Codex hooks{reset}");
+    println!(
+        "    {dim}Run this, then open /hooks in Codex to review and trust the command hooks:{reset}"
+    );
+    println!("        jkl init hooks --tool codex --scope global --non-interactive");
+    println!(
+        "    {dim}Events: UserPromptSubmit/PostToolUse = working, PermissionRequest = blocked, Stop = idle.{reset}"
+    );
+    println!();
+
     println!("{accent}▸{reset} {bold}tmux + TPM{reset}");
     println!("    {dim}Paste into your agent to enable the jkl-2 plugin in ~/.tmux.conf:{reset}");
     println!("        set -g @plugin 'cruzluna/jkl-2'");

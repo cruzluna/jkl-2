@@ -17,6 +17,9 @@ const KIRO_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux
 const CURSOR_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
 const CURSOR_BLOCKED_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status blocked";
 const CURSOR_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle";
+const CODEX_WORKING_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status working";
+const CODEX_BLOCKED_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status blocked";
+const CODEX_IDLE_COMMAND: &str = "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle";
 
 const KIRO_NAME: &str = "jkl";
 const KIRO_DESCRIPTION: &str = "Sync jkl status with Kiro activity";
@@ -49,7 +52,12 @@ const ALL_PROMPT_TOOLS: [InitTool; 4] = [
     InitTool::Kiro,
     InitTool::Codex,
 ];
-const HOOK_PROMPT_TOOLS: [InitTool; 3] = [InitTool::Claude, InitTool::Cursor, InitTool::Kiro];
+const HOOK_PROMPT_TOOLS: [InitTool; 4] = [
+    InitTool::Claude,
+    InitTool::Cursor,
+    InitTool::Kiro,
+    InitTool::Codex,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum InitTool {
@@ -150,7 +158,12 @@ pub fn run_hooks(
     let tool = resolve_tool(
         tool,
         non_interactive,
-        &[InitTool::Claude, InitTool::Cursor, InitTool::Kiro],
+        &[
+            InitTool::Claude,
+            InitTool::Cursor,
+            InitTool::Kiro,
+            InitTool::Codex,
+        ],
         "Select the tool to initialize hooks for:",
         "--tool is required when using --non-interactive",
     )?;
@@ -159,7 +172,7 @@ pub fn run_hooks(
     match tool {
         InitTool::Claude => {
             if config_paths.is_some() {
-                bail!("--agent-config is only supported for --tool kiro or cursor");
+                bail!("--agent-config is only supported for --tool kiro, cursor, or codex");
             }
             if agents_dir.is_some() {
                 bail!("--agent-config-dir is only supported for --tool kiro");
@@ -186,7 +199,15 @@ pub fn run_hooks(
                 apply_hooks_to_file(&path, tool)?;
             }
         }
-        InitTool::Codex => bail!("codex does not support hooks"),
+        InitTool::Codex => {
+            if agents_dir.is_some() {
+                bail!("--agent-config-dir is only supported for --tool kiro");
+            }
+            let paths = resolve_codex_hook_paths(scope, config_paths)?;
+            for path in paths {
+                apply_hooks_to_file(&path, tool)?;
+            }
+        }
     }
 
     Ok(())
@@ -359,7 +380,7 @@ fn hook_path_hints(tool: InitTool) -> &'static [&'static str] {
         InitTool::Claude => &[".claude/settings.local.json", "~/.claude/settings.json"],
         InitTool::Cursor => &[".cursor/hooks.json", "~/.cursor/hooks.json"],
         InitTool::Kiro => &[".kiro/agents/jkl.json", "~/.kiro/agents/jkl.json"],
-        InitTool::Codex => &[],
+        InitTool::Codex => &[".codex/hooks.json", "~/.codex/hooks.json"],
     }
 }
 
@@ -375,7 +396,9 @@ fn hook_config_snippet(tool: InitTool) -> Result<String> {
         InitTool::Kiro => {
             ensure_kiro_hooks(&mut root)?;
         }
-        InitTool::Codex => bail!("codex does not support hooks"),
+        InitTool::Codex => {
+            ensure_codex_hooks(&mut root)?;
+        }
     }
 
     Ok(serde_json::to_string_pretty(&root).context("serialize hook config")?)
@@ -430,7 +453,7 @@ fn apply_hooks_to_file(path: &Path, tool: InitTool) -> Result<()> {
         InitTool::Claude => ensure_claude_hooks(&mut root)?,
         InitTool::Cursor => ensure_cursor_hooks(&mut root)?,
         InitTool::Kiro => ensure_kiro_hooks(&mut root)?,
-        InitTool::Codex => bail!("codex does not support hooks"),
+        InitTool::Codex => ensure_codex_hooks(&mut root)?,
     };
 
     if changed || !existed_before {
@@ -460,7 +483,10 @@ fn hooks_config_path(tool: InitTool, scope: InitScope) -> Result<PathBuf> {
             .join(".kiro")
             .join("agents")
             .join("jkl.json"),
-        (InitTool::Codex, _) => bail!("codex does not support hooks"),
+        (InitTool::Codex, InitScope::Global) => home.join(".codex").join("hooks.json"),
+        (InitTool::Codex, InitScope::Local) => {
+            std::env::current_dir()?.join(".codex").join("hooks.json")
+        }
     })
 }
 
@@ -511,6 +537,17 @@ fn resolve_cursor_hook_paths(
     }
 
     Ok(vec![hooks_config_path(InitTool::Cursor, scope)?])
+}
+
+fn resolve_codex_hook_paths(
+    scope: InitScope,
+    config_paths: Option<Vec<PathBuf>>,
+) -> Result<Vec<PathBuf>> {
+    if let Some(paths) = config_paths {
+        return normalize_user_paths(paths);
+    }
+
+    Ok(vec![hooks_config_path(InitTool::Codex, scope)?])
 }
 
 fn discover_kiro_agent_configs(agents_dir: &Path) -> Result<Vec<PathChoice>> {
@@ -708,7 +745,7 @@ fn ensure_claude_hook(
     let hooks = object_field(root_obj, "hooks")?;
     let event_entries = array_field(hooks, event)?;
 
-    if claude_event_contains_command(event_entries, matcher, command) {
+    if nested_hook_event_contains_command(event_entries, matcher, command) {
         return Ok(false);
     }
 
@@ -730,7 +767,11 @@ fn ensure_claude_hook(
     Ok(true)
 }
 
-fn claude_event_contains_command(entries: &[Value], matcher: Option<&str>, command: &str) -> bool {
+fn nested_hook_event_contains_command(
+    entries: &[Value],
+    matcher: Option<&str>,
+    command: &str,
+) -> bool {
     entries.iter().any(|entry| {
         if entry.get("matcher").and_then(Value::as_str) != matcher {
             return false;
@@ -745,6 +786,49 @@ fn claude_event_contains_command(entries: &[Value], matcher: Option<&str>, comma
                 })
             })
     })
+}
+
+fn ensure_codex_hooks(root: &mut Value) -> Result<bool> {
+    let mut changed = false;
+    changed |= ensure_codex_hook(root, "UserPromptSubmit", None, CODEX_WORKING_COMMAND)?;
+    changed |= ensure_codex_hook(root, "PermissionRequest", None, CODEX_BLOCKED_COMMAND)?;
+    changed |= ensure_codex_hook(root, "PostToolUse", None, CODEX_WORKING_COMMAND)?;
+    changed |= ensure_codex_hook(root, "Stop", None, CODEX_IDLE_COMMAND)?;
+    Ok(changed)
+}
+
+fn ensure_codex_hook(
+    root: &mut Value,
+    event: &str,
+    matcher: Option<&str>,
+    command: &str,
+) -> Result<bool> {
+    let root_obj = root
+        .as_object_mut()
+        .context("codex config root must be a JSON object")?;
+    let hooks = object_field(root_obj, "hooks")?;
+    let event_entries = array_field(hooks, event)?;
+
+    if nested_hook_event_contains_command(event_entries, matcher, command) {
+        return Ok(false);
+    }
+
+    let mut entry = json!({
+        "hooks": [
+            {
+                "type": "command",
+                "command": command
+            }
+        ]
+    });
+    if let Some(matcher) = matcher
+        && let Some(entry_obj) = entry.as_object_mut()
+    {
+        entry_obj.insert("matcher".to_string(), Value::String(matcher.to_string()));
+    }
+    event_entries.push(entry);
+
+    Ok(true)
 }
 
 fn ensure_kiro_hooks(root: &mut Value) -> Result<bool> {
@@ -971,12 +1055,33 @@ mod tests {
     use crate::test_utils::EnvGuard;
 
     #[test]
-    fn hooks_path_rejects_codex() {
-        let mut env = EnvGuard::new("init-hooks-codex-reject");
+    fn hooks_path_for_codex_resolves_global_and_local() {
+        let mut env = EnvGuard::new("init-hooks-codex-paths");
         env.set_temp_home();
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+        let previous_cwd = std::env::current_dir().expect("current cwd");
+        struct CwdGuard(PathBuf);
+        impl Drop for CwdGuard {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+        let _cwd_guard = CwdGuard(previous_cwd);
+        std::env::set_current_dir(&cwd).expect("set cwd");
 
-        let err = hooks_config_path(InitTool::Codex, InitScope::Local).expect_err("expected error");
-        assert!(err.to_string().contains("does not support hooks"));
+        let global = hooks_config_path(InitTool::Codex, InitScope::Global).expect("global path");
+        let local = hooks_config_path(InitTool::Codex, InitScope::Local).expect("local path");
+
+        assert_eq!(
+            global,
+            env.temp_dir()
+                .join("home")
+                .join(".codex")
+                .join("hooks.json")
+        );
+        let cwd_resolved = std::env::current_dir().expect("resolved cwd");
+        assert_eq!(local, cwd_resolved.join(".codex").join("hooks.json"));
     }
 
     #[test]
@@ -1109,6 +1214,51 @@ mod tests {
     }
 
     #[test]
+    fn ensure_codex_hooks_is_idempotent() {
+        let mut root = json!({});
+
+        let first = ensure_codex_hooks(&mut root).expect("first ensure");
+        let second = ensure_codex_hooks(&mut root).expect("second ensure");
+
+        assert!(first);
+        assert!(!second);
+
+        let hooks = root
+            .get("hooks")
+            .and_then(Value::as_object)
+            .expect("hooks object");
+        let submit = hooks
+            .get("UserPromptSubmit")
+            .and_then(Value::as_array)
+            .expect("submit array");
+        assert_eq!(submit.len(), 1);
+        let permission_request = hooks
+            .get("PermissionRequest")
+            .and_then(Value::as_array)
+            .expect("permission request array");
+        assert_eq!(permission_request.len(), 1);
+        assert_eq!(
+            permission_request[0]
+                .get("hooks")
+                .and_then(Value::as_array)
+                .and_then(|hooks| hooks.first())
+                .and_then(|hook| hook.get("command"))
+                .and_then(Value::as_str),
+            Some(CODEX_BLOCKED_COMMAND)
+        );
+        let post_tool = hooks
+            .get("PostToolUse")
+            .and_then(Value::as_array)
+            .expect("post tool array");
+        assert_eq!(post_tool.len(), 1);
+        let stop = hooks
+            .get("Stop")
+            .and_then(Value::as_array)
+            .expect("stop array");
+        assert_eq!(stop.len(), 1);
+    }
+
+    #[test]
     fn write_file_if_changed_skips_unchanged() {
         let env = EnvGuard::new("init-write-file-if-changed");
         let path = env.temp_dir().join("file.txt");
@@ -1174,18 +1324,36 @@ mod tests {
     }
 
     #[test]
-    fn render_prompts_returns_note_for_unsupported_explicit_combo() {
-        let rendered = render_prompts(Some(InitTool::Codex), Some(InitPromptOption::Hooks))
-            .expect("render prompts");
-        assert_eq!(rendered, "Codex does not support hooks prompts.");
+    fn resolve_codex_hook_paths_uses_explicit_paths() {
+        let env = EnvGuard::new("init-codex-path-override");
+        let cwd = env.temp_dir().join("project");
+        fs::create_dir_all(&cwd).expect("create cwd");
+        let explicit = cwd.join(".codex").join("dev-hooks.json");
+
+        let resolved = resolve_codex_hook_paths(InitScope::Local, Some(vec![explicit.clone()]))
+            .expect("resolve codex paths");
+        assert_eq!(resolved, vec![explicit]);
     }
 
     #[test]
-    fn render_prompts_for_codex_includes_supported_sections_only() {
+    fn render_prompts_for_codex_hooks_includes_supported_config() {
+        let rendered = render_prompts(Some(InitTool::Codex), Some(InitPromptOption::Hooks))
+            .expect("render prompts");
+        assert!(rendered.contains("Codex"));
+        assert!(rendered.contains(".codex/hooks.json"));
+        assert!(rendered.contains("~/.codex/hooks.json"));
+        assert!(rendered.contains("UserPromptSubmit"));
+        assert!(rendered.contains("PermissionRequest"));
+        assert!(rendered.contains("PostToolUse"));
+        assert!(rendered.contains("Stop"));
+    }
+
+    #[test]
+    fn render_prompts_for_codex_includes_all_supported_sections() {
         let rendered = render_prompts(Some(InitTool::Codex), None).expect("render prompts");
+        assert!(rendered.contains("Hooks"));
         assert!(rendered.contains("AGENTS.md"));
         assert!(rendered.contains("tmux.conf"));
-        assert!(!rendered.contains("Hooks"));
     }
 
     #[test]

@@ -213,6 +213,12 @@ print_message muted "  stop:"
 print_message info "      $IDLE_HOOK_COMMAND"
 printf "\n"
 
+print_message accent "▸ Codex hooks"
+print_message muted "  Run this, then open /hooks in Codex to review and trust the command hooks:"
+print_message info "      jkl init hooks --tool codex --scope global --non-interactive"
+print_message muted "  Events: UserPromptSubmit/PostToolUse = working, PermissionRequest = blocked, Stop = idle."
+printf "\n"
+
 print_message accent "▸ tmux + TPM"
 print_message muted "  Paste into your agent to enable the jkl-2 plugin in ~/.tmux.conf:"
 print_message info "      set -g @plugin 'cruzluna/jkl-2'"
