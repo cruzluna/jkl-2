@@ -281,7 +281,10 @@ fn print_post_update_notes() {
     );
     println!("        jkl init hooks --tool codex --scope global --non-interactive");
     println!(
-        "    {dim}Events: UserPromptSubmit/PostToolUse = working, PermissionRequest = blocked, Stop = idle.{reset}"
+        "    {dim}Events: SessionStart/Stop = idle, UserPromptSubmit/PostToolUse = working, PermissionRequest = blocked.{reset}"
+    );
+    println!(
+        "    {dim}Note: Esc-interrupted turns do not fire Stop (openai/codex#22858); SessionStart resets to idle on start/resume/clear.{reset}"
     );
     println!();
 

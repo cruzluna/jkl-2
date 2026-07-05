@@ -790,6 +790,16 @@ fn nested_hook_event_contains_command(
 
 fn ensure_codex_hooks(root: &mut Value) -> Result<bool> {
     let mut changed = false;
+    // Codex does not fire Stop when a turn is interrupted (Esc), so a pane can
+    // stay stuck on "working". SessionStart resets it to idle whenever Codex
+    // starts, resumes, or the conversation is cleared. "compact" is excluded
+    // because compaction can happen mid-turn.
+    changed |= ensure_codex_hook(
+        root,
+        "SessionStart",
+        Some("startup|resume|clear"),
+        CODEX_IDLE_COMMAND,
+    )?;
     changed |= ensure_codex_hook(root, "UserPromptSubmit", None, CODEX_WORKING_COMMAND)?;
     changed |= ensure_codex_hook(root, "PermissionRequest", None, CODEX_BLOCKED_COMMAND)?;
     changed |= ensure_codex_hook(root, "PostToolUse", None, CODEX_WORKING_COMMAND)?;
@@ -1227,6 +1237,24 @@ mod tests {
             .get("hooks")
             .and_then(Value::as_object)
             .expect("hooks object");
+        let session_start = hooks
+            .get("SessionStart")
+            .and_then(Value::as_array)
+            .expect("session start array");
+        assert_eq!(session_start.len(), 1);
+        assert_eq!(
+            session_start[0].get("matcher").and_then(Value::as_str),
+            Some("startup|resume|clear")
+        );
+        assert_eq!(
+            session_start[0]
+                .get("hooks")
+                .and_then(Value::as_array)
+                .and_then(|hooks| hooks.first())
+                .and_then(|hook| hook.get("command"))
+                .and_then(Value::as_str),
+            Some(CODEX_IDLE_COMMAND)
+        );
         let submit = hooks
             .get("UserPromptSubmit")
             .and_then(Value::as_array)
@@ -1342,6 +1370,8 @@ mod tests {
         assert!(rendered.contains("Codex"));
         assert!(rendered.contains(".codex/hooks.json"));
         assert!(rendered.contains("~/.codex/hooks.json"));
+        assert!(rendered.contains("SessionStart"));
+        assert!(rendered.contains("startup|resume|clear"));
         assert!(rendered.contains("UserPromptSubmit"));
         assert!(rendered.contains("PermissionRequest"));
         assert!(rendered.contains("PostToolUse"));
