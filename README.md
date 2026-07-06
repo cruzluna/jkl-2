@@ -319,11 +319,27 @@ To target specific Codex hook config files:
 jkl init hooks --tool codex --scope local --non-interactive --agent-config .codex/hooks.json ./custom/codex/hooks.json
 ```
 
-After adding or changing non-managed command hooks, open `/hooks` in Codex to review and trust them.
+After adding or changing non-managed command hooks, open `/hooks` in Codex to review and trust them. Codex records trust against the exact hook definition, so re-running `jkl init hooks --tool codex` after any change silently skips the hooks until you re-trust them in `/hooks`.
+
+Codex idle-status limitations (upstream):
+
+- `Stop` (which sets `idle`) only fires when a turn completes. Interrupting a turn with `Esc` does not fire `Stop`, so the pane can stay on `working` until the next hook event ([openai/codex#22858](https://github.com/openai/codex/issues/22858)). The `SessionStart` hook resets the pane to `idle` when Codex starts, resumes, or the conversation is cleared.
+- Headless `codex exec` currently does not dispatch hooks at all; only the interactive TUI does ([openai/codex#26452](https://github.com/openai/codex/issues/26452)).
 
 ```json
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$TMUX\" ] || exit 0; jkl upsert \"$(tmux display-message -p '#S')\" --session-id \"$(tmux display-message -p '#{session_id}')\" --pane-id \"$(tmux display-message -p '#{pane_id}')\" --status idle"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

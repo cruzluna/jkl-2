@@ -276,12 +276,19 @@ fn print_post_update_notes() {
     println!();
 
     println!("{accent}▸{reset} {bold}Codex hooks{reset}");
+    println!("    {dim}Paste into Codex to have it set up the hooks for you:{reset}");
     println!(
-        "    {dim}Run this, then open /hooks in Codex to review and trust the command hooks:{reset}"
+        "        Set up jkl status hooks for Codex by running `jkl init hooks --tool codex --scope global --non-interactive`, then remind me to run /hooks to review and trust them."
+    );
+    println!(
+        "    {dim}Or run the CLI directly, then open /hooks in Codex to review and trust the command hooks:{reset}"
     );
     println!("        jkl init hooks --tool codex --scope global --non-interactive");
     println!(
-        "    {dim}Events: UserPromptSubmit/PostToolUse = working, PermissionRequest = blocked, Stop = idle.{reset}"
+        "    {dim}Events: SessionStart/Stop = idle, UserPromptSubmit/PostToolUse = working, PermissionRequest = blocked.{reset}"
+    );
+    println!(
+        "    {dim}Note: Esc-interrupted turns do not fire Stop (openai/codex#22858); SessionStart resets to idle on start/resume/clear.{reset}"
     );
     println!();
 
