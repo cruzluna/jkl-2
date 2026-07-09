@@ -122,12 +122,62 @@ fn detect_asset_identifier(target: &str) -> Option<&'static str> {
     detect_asset_identifier_for(target, is_amazon_linux_2())
 }
 
+fn normalize_version(version: &str) -> &str {
+    let version = version
+        .strip_prefix("v.")
+        .or_else(|| version.strip_prefix('v'))
+        .unwrap_or(version);
+    version.strip_prefix('.').unwrap_or(version)
+}
+
+fn release_tag(version: &str) -> String {
+    if version.starts_with('v') {
+        version.to_string()
+    } else {
+        format!("v{version}")
+    }
+}
+
+fn select_latest_stable_release(releases: &[Release]) -> Option<&Release> {
+    releases
+        .iter()
+        .find(|release| !normalize_version(&release.version).contains('-'))
+}
+
+fn fetch_releases(
+    config: &UpdateConfig,
+    target: Option<&str>,
+    identifier: Option<&str>,
+) -> Result<Vec<Release>> {
+    let mut builder = ReleaseList::configure();
+    builder
+        .repo_owner(config.repo_owner)
+        .repo_name(config.repo_name);
+    if let Some(target) = target {
+        builder.with_target(target);
+    }
+
+    let releases = builder.build()?.fetch()?;
+    Ok(filter_releases_for_identifier(releases, target, identifier))
+}
+
+fn find_latest_stable_release(
+    config: &UpdateConfig,
+    target: Option<&str>,
+    identifier: Option<&str>,
+) -> Result<Release> {
+    let releases = fetch_releases(config, target, identifier)?;
+    select_latest_stable_release(&releases)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("no stable release tags found"))
+}
+
 fn select_channel_tag(releases: &[Release], channel: UpdateChannel) -> Option<String> {
     let fragment = channel.tag_fragment()?;
     releases
         .iter()
         .find(|release| release.version.contains(fragment))
-        .map(|release| format!("v{}", release.version))
+        .map(|release| release_tag(&release.version))
 }
 
 fn filter_releases_for_identifier(
@@ -154,14 +204,7 @@ fn find_channel_tag(
         bail!("{}", channel.not_found_error());
     }
 
-    let mut builder = ReleaseList::configure();
-    builder
-        .repo_owner(config.repo_owner)
-        .repo_name(config.repo_name);
-    if let Some(target) = target {
-        builder.with_target(target);
-    }
-    let releases = filter_releases_for_identifier(builder.build()?.fetch()?, target, identifier);
+    let releases = fetch_releases(config, target, identifier)?;
     select_channel_tag(&releases, channel).ok_or_else(|| anyhow::anyhow!(channel.not_found_error()))
 }
 
@@ -197,7 +240,23 @@ pub fn run(channel: UpdateChannel) -> Result<()> {
         );
     }
 
-    if channel != UpdateChannel::Stable {
+    if channel == UpdateChannel::Stable {
+        let latest_release =
+            find_latest_stable_release(&config, Some(target.as_str()), asset_identifier)
+                .context("find latest stable release")?;
+        let latest_version = normalize_version(&latest_release.version);
+        if !self_update::version::bump_is_greater(current_version, latest_version)
+            .context("compare current version with latest stable release")?
+        {
+            log::info!("already up-to-date");
+            print_post_update_notes();
+            return Ok(());
+        }
+
+        if latest_release.version.starts_with('.') {
+            builder.target_version_tag(&release_tag(&latest_release.version));
+        }
+    } else {
         let tag = find_channel_tag(&config, Some(target.as_str()), asset_identifier, channel)
             .with_context(|| format!("find {} tag", channel.context_label()))?;
         builder.target_version_tag(&tag);
@@ -210,7 +269,7 @@ pub fn run(channel: UpdateChannel) -> Result<()> {
         .context("perform self-update")?;
 
     if status.updated() {
-        log::info!("updated to {}", status.version());
+        log::info!("updated to {}", normalize_version(status.version()));
     } else {
         log::info!("already up-to-date");
     }
@@ -453,6 +512,27 @@ VERSION_ID=2023
         let filtered =
             filter_releases_for_identifier(releases, Some("x86_64-unknown-linux-gnu"), None);
         assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn normalize_version_supports_v_dot_and_v_prefixes() {
+        assert_eq!(normalize_version("v.0.1.5"), "0.1.5");
+        assert_eq!(normalize_version("v0.1.5"), "0.1.5");
+        assert_eq!(normalize_version(".0.1.5"), "0.1.5");
+    }
+
+    #[test]
+    fn select_latest_stable_release_skips_prereleases() {
+        let releases = vec![release(".0.2.0-rc.1"), release(".0.1.9"), release("0.1.8")];
+        let stable = select_latest_stable_release(&releases).expect("stable release");
+        assert_eq!(stable.version, ".0.1.9");
+    }
+
+    #[test]
+    fn select_channel_tag_preserves_v_dot_prefix() {
+        let releases = vec![release(".0.2.0-rc.1")];
+        let tag = select_channel_tag(&releases, UpdateChannel::PreRelease);
+        assert_eq!(tag.as_deref(), Some("v.0.2.0-rc.1"));
     }
 
     #[test]
